@@ -79,6 +79,7 @@ if uploaded_file is not None:
         "Select cleaning method": None,
         "Remove duplicate rows": "REMOVE_DUPLICATES",
         "Drop rows with NaN": "DROP_NA_ROWS",
+        "Drop columns with NaN" : "DROP_NA_COLUMNS",
         "Strip whitespace (strings)": "STRIP_WHITESPACE",
         "Fill NaN with mean": "FILL_NA_MEAN",
         "Fill NaN with median": "FILL_NA_MEDIAN",

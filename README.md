@@ -36,6 +36,7 @@ A **column detail picker** below the table lets you select any column and view i
 | ----------------------- | -------------------------------------------------------------- |
 | Remove duplicate rows   | Drops exact duplicates and resets the index                    |
 | Drop rows with NaN      | Removes any row containing at least one missing value          |
+| Drop columns with NaN   | Removes any columns containing at least one missing value      |
 | Strip whitespace        | Trims leading/trailing spaces from all string columns          |
 | Fill NaN with mean      | Fills missing numeric values with the column mean              |
 | Fill NaN with median    | Fills missing numeric values with the column median            |

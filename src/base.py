@@ -40,6 +40,10 @@ class BaseDataCleaner(ABC):
         pass
 
     @abstractmethod
+    def drop_na_columns(self):
+        pass
+
+    @abstractmethod
     def fill_na_mean(self):
         pass
 

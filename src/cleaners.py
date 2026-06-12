@@ -9,6 +9,7 @@ class DataCleaner(BaseDataCleaner):
         self.clean_methods = {
             "REMOVE_DUPLICATES": self.remove_duplicates,
             "DROP_NA_ROWS": self.drop_na_rows,
+            "DROP_NA_COLUMNS": self.drop_na_columns,
             "FILL_NA_MEAN": self.fill_na_mean,
             "FILL_NA_MEDIAN": self.fill_na_median,
             "STRIP_WHITESPACE": self.strip_whitespace,
@@ -32,6 +33,13 @@ class DataCleaner(BaseDataCleaner):
         removed = before - len(self.df)
         return f"Dropped {removed} row(s) with missing values."
 
+    def drop_na_columns(self):
+        cols_before = len(self.df.columns)
+        self.df = self.df.dropna(axis=1, how='all')
+        cols_after = len(self.df.columns)
+        removed = cols_before - cols_after
+        return f"Removed {removed} columns with missing values."
+    
     def fill_na_mean(self):
         numeric_cols = self.df.select_dtypes(include=["number"]).columns
         self.df[numeric_cols] = self.df[numeric_cols].fillna(self.df[numeric_cols].mean())
