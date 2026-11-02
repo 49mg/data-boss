@@ -586,6 +586,10 @@
                       <div class="viz-sub" id="viz-sub"></div>
                     </div>
                     <div class="viz-actions" id="viz-actions" hidden>
+                      <div class="segmented segmented-sm" id="chart-mode" role="tablist" aria-label="Chart view">
+                        <button role="tab" data-mode="interactive" aria-selected="true" title="Hover for values, drag to zoom, click a bar to filter">Interactive</button>
+                        <button role="tab" data-mode="image" aria-selected="false" title="The exact image that PNG, SVG and reports use">Image</button>
+                      </div>
                       <button id="btn-copy-chart" class="btn btn-sm" title="Copy image to clipboard">
                         <svg class="icon"><use href="#i-copy"/></svg>Copy
                       </button>
@@ -665,6 +669,7 @@
     <div id="toasts" class="toasts" aria-live="polite"></div>
     <div id="busy" class="busy" hidden></div>
 
+    <script src="vendor/echarts/echarts.min.js"></script>
     <script src="citymap.js"></script>
     <script src="app.js"></script>
   </body>

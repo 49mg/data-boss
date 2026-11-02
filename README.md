@@ -69,6 +69,10 @@ The **Clusters** tab groups similar rows with k-means: it tries 2–8 clusters, 
 
 The **Forecast** tab projects a value per day, week, month, quarter or year with exponential smoothing (Holt-Winters, statsmodels): with or without a damped trend and seasonality, chosen by AICc. It shows 80% and 95% ranges, the seasonal high and low points, and a **backtest** that hides the last periods, forecasts them, and compares the error with a simple “same as last season” benchmark, so you can see how far to trust it. An incomplete last period is left out instead of looking like a collapse.
 
+### Interactive charts
+
+Charts in Visualize are interactive (Apache ECharts, bundled locally, no internet needed): hover for exact values, scroll or drag to zoom, and click a bar, box or histogram range to **keep only those rows** or **compare them with the rest**. Clicking a correlation cell opens the scatter plot of that pair. The **Image** view shows the exact Matplotlib image that PNG, SVG, copy, reports and the exported code use.
+
 ### Report
 
 Every chart, pivot table, trend, segment comparison and test result has a **Report** button. The Report screen collects them with your own headings and notes; reorder or remove items, then **Export HTML** (one self-contained file with images inlined, opens offline in any browser) or **Export PDF**. Charts in the report are always drawn in light colours so they print well, and the report is kept between sessions.
@@ -153,6 +157,7 @@ data-boss/
 │   ├── styles.css          # UI styles (light + dark)
 │   ├── app.js              # UI logic
 │   ├── theme.js            # Applies the saved/system theme before first paint
+│   ├── vendor/echarts/     # Apache ECharts 5.5.1 (Apache-2.0, see its LICENSE and NOTICE)
 │   ├── report.css          # Styles for the report preview and exported HTML/PDF
 │   ├── citymap.js          # Decorative city-map background
 │   └── fonts/              # Bundled Geist font (SIL Open Font License)

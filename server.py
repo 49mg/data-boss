@@ -478,7 +478,7 @@ class Session:
             "plt.show()",
             "",
         ])
-        result = {"insights": out["insights"], "notes": out["notes"], "code": code}
+        result = {"insights": out["insights"], "notes": out["notes"], "code": code, "spec": jsonable(out.get("spec"))}
         if fmt == "svg":
             result["svg"] = out["data"]
         else:

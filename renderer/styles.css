@@ -1234,6 +1234,18 @@ circle.cl { fill: var(--cl); fill-opacity: 0.7; }
 .trend-key.band-key { height: 10px; background: color-mix(in srgb, var(--primary) 22%, transparent); }
 .trend-key.bt-key { background: repeating-linear-gradient(90deg, var(--warning) 0 3px, transparent 3px 6px); }
 
+/* interactive charts */
+.echart { width: 100%; min-height: 320px; }
+#chart-output { position: relative; }
+.chart-actions {
+  position: absolute; z-index: 5; display: flex; flex-direction: column; gap: 6px; align-items: stretch;
+  padding: 10px; padding-right: 40px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface); box-shadow: 0 8px 24px rgb(0 0 0 / 0.16); max-width: 300px;
+}
+.chart-actions .btn { justify-content: flex-start; white-space: normal; text-align: left; }
+.chart-actions .icon-btn { position: absolute; top: 8px; right: 8px; width: 24px; height: 24px; }
+#chart-mode { margin-right: 6px; }
+
 /* report builder */
 #section-report { max-width: 960px; }
 .report-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px 18px; }

@@ -513,6 +513,7 @@ function onLoaded(snapshot) {
   app.page = 0;
   app.forms = { clean: {}, chart: {} };
   app.chartImage = null;
+  if (typeof disposeEchart === "function") disposeEchart();
   app.recent = [];
   app.pivot = null;
   app.pivotStale = true;
@@ -3190,6 +3191,7 @@ function showChartMessage(kind, text) {
   $("viz-actions").hidden = true;
   $("viz-insights").hidden = true;
   app.chartImage = null;
+  if (typeof disposeEchart === "function") disposeEchart();
   setChartHeading(app.chartKind, chartValues);
   $("chart-output").replaceChildren(el("div", { class: "viz-message" }, note(kind, text)));
 }
@@ -3216,7 +3218,8 @@ async function generateChart() {
     app.chartCode = res.code;
     app.chartParams = params;
     setChartHeading(kind, chartValues);
-    $("chart-output").replaceChildren(el("img", { src: res.image, alt: `${chartLabel()}: ${chartSubtitle(kind, chartValues)}` }));
+    app.chartSpec = res.spec;
+    showChartView();
     renderInsights(res.insights, res.notes);
     $("viz-actions").hidden = false;
     rememberChart(kind, { ...chartValues }, res.image);
@@ -3266,6 +3269,7 @@ function chartSuggestions() {
 
 function renderChartEmpty() {
   app.chartImage = null;
+  if (typeof disposeEchart === "function") disposeEchart();
   $("viz-actions").hidden = true;
   $("viz-insights").hidden = true;
   setChartHeading("", {});
@@ -4313,3 +4317,239 @@ $("btn-forecast").addEventListener("click", runForecast);
 $("btn-report-forecast").addEventListener("click", reportForecast);
 $("btn-forecast-code").addEventListener("click", () => app.forecast &&
   openCodeDialog("Forecast as statsmodels code", "Rebuilds the period series, fits the same model and prints the forecast and backtest error.", app.forecast.code, "forecast.py"));
+
+/* ------------------------------------------------------------------ */
+/* interactive charts (ECharts)                                         */
+/* ------------------------------------------------------------------ */
+
+function chartMode() {
+  try {
+    return localStorage.getItem("chartMode") === "image" ? "image" : "interactive";
+  } catch {
+    return "interactive";
+  }
+}
+
+function setChartMode(mode) {
+  try { localStorage.setItem("chartMode", mode); } catch { /* per-viewer convenience only */ }
+  showChartView();
+}
+
+function disposeEchart() {
+  if (app.echart) {
+    app.echart.dispose();
+    app.echart = null;
+  }
+}
+
+/** Show the current chart as an interactive ECharts view or as the exported image. */
+function showChartView() {
+  const mode = chartMode();
+  for (const b of document.querySelectorAll("#chart-mode button")) b.setAttribute("aria-selected", String(b.dataset.mode === mode));
+  const out = $("chart-output");
+  disposeEchart();
+  if (!app.chartImage) return;
+  const alt = `${chartLabel()}: ${chartSubtitle(app.chartKind, chartValues)}`;
+  if (mode === "image" || !app.chartSpec || typeof echarts === "undefined") {
+    out.replaceChildren(el("img", { src: app.chartImage, alt }));
+    return;
+  }
+  const box = el("div", { class: "echart", role: "img", "aria-label": alt });
+  out.replaceChildren(box);
+  try {
+    const spec = app.chartSpec;
+    const height = spec.type === "pair" ? Math.min(760, 160 * spec.columns.length + 60)
+      : spec.type === "heat" ? Math.min(720, 46 * spec.columns.length + 140)
+      : spec.type === "bar" && spec.horizontal ? Math.max(360, 26 * spec.labels.length + 80) : 440;
+    box.style.height = `${height}px`;
+    app.echart = echarts.init(box, null, { renderer: "canvas" });
+    app.echart.setOption(echartOption(spec, chartStyle()));
+    app.echart.on("click", (p) => onChartClick(spec, p));
+  } catch (err) {
+    console.warn("Interactive chart failed, showing the image instead:", err);
+    disposeEchart();
+    out.replaceChildren(el("img", { src: app.chartImage, alt }));
+  }
+}
+
+const chartResize = new ResizeObserver(() => app.echart && app.echart.resize());
+chartResize.observe($("chart-output"));
+
+function echartOption(spec, t) {
+  const axis = { axisLine: { lineStyle: { color: t.border } }, axisLabel: { color: t.muted }, splitLine: { lineStyle: { color: t.border, opacity: 0.6 } },
+    nameTextStyle: { color: t.muted }, nameLocation: "middle" };
+  const base = {
+    backgroundColor: "transparent", color: t.palette, textStyle: { color: t.text, fontFamily: getComputedStyle(document.body).fontFamily },
+    // Rich-text tooltips are drawn on the canvas: no HTML, so nothing clashes with the strict CSP.
+    tooltip: { renderMode: "richText", backgroundColor: t.surface, borderColor: t.border, textStyle: { color: t.text }, confine: true },
+    legend: { textStyle: { color: t.muted }, top: 0, type: "scroll" },
+    grid: { left: 64, right: 24, top: 36, bottom: 56, containLabel: false },
+    animationDuration: 300,
+  };
+  const zoom = (dims) => dims.map((d) => ({ type: "inside", [`${d}AxisIndex`]: 0, filterMode: "none" }));
+  switch (spec.type) {
+    case "hist": {
+      const labels = spec.edges.slice(0, -1).map((e, i) => `${fnum(e)}–${fnum(spec.edges[i + 1])}`);
+      const medianBin = spec.edges.findIndex((e, i) => i < spec.edges.length - 1 && spec.median >= e && spec.median <= spec.edges[i + 1]);
+      return { ...base, legend: { ...base.legend, show: spec.series.length > 1 },
+        tooltip: { ...base.tooltip, trigger: "axis", axisPointer: { type: "shadow" } },
+        xAxis: { ...axis, type: "category", data: labels, name: spec.x, nameGap: 36, axisLabel: { color: t.muted, hideOverlap: true } },
+        yAxis: { ...axis, type: "value", name: "Count", nameGap: 44 },
+        dataZoom: zoom(["x"]),
+        series: spec.series.map((sr, i) => ({ type: "bar", name: sr.name, data: sr.counts, barCategoryGap: "4%", barGap: "-100%",
+          itemStyle: { opacity: spec.series.length > 1 ? 0.55 : 0.9 },
+          markLine: i === 0 && medianBin >= 0 ? { symbol: "none", silent: true, label: { formatter: `median ${fnum(spec.median)}`, color: t.muted },
+            lineStyle: { color: t.text, type: "dashed", opacity: 0.6 }, data: [{ xAxis: medianBin }] } : undefined })) };
+    }
+    case "box":
+      return { ...base, legend: { show: false }, tooltip: { ...base.tooltip, trigger: "item" },
+        xAxis: { ...axis, type: "category", data: spec.boxes.map((b) => b.name), name: spec.x || "", nameGap: 36, axisLabel: { color: t.muted, hideOverlap: true } },
+        yAxis: { ...axis, type: spec.log ? "log" : "value", name: spec.y, nameGap: 50, scale: true },
+        series: [
+          { type: "boxplot", name: spec.y, data: spec.boxes.map((b) => b.stats), itemStyle: { color: `${t.palette[0]}33`, borderColor: t.palette[0] },
+            tooltip: { formatter: (p) => { const b = spec.boxes[p.dataIndex]; const [lo, q1, md, q3, hi] = b.stats;
+              return `${plain(b.name)} (n=${fmt(b.n)})\nmax ${fnum(hi)}\nQ3 ${fnum(q3)}\nmedian ${fnum(md)}\nQ1 ${fnum(q1)}\nmin ${fnum(lo)}`; } } },
+          { type: "scatter", name: "outliers", symbolSize: 5, itemStyle: { color: t.negative, opacity: 0.7 },
+            data: spec.boxes.flatMap((b, i) => b.outliers.map((o) => [i, o])) },
+        ] };
+    case "scatter": {
+      const series = spec.series.map((sr) => ({ type: "scatter", name: sr.name, data: sr.points, symbolSize: sr.points.length > 1500 ? 4 : 7,
+        itemStyle: { opacity: sr.points.length > 1500 ? 0.45 : 0.75 } }));
+      if (spec.trend) series.push({ type: "line", name: "trend", data: spec.trend, symbol: "none", lineStyle: { type: "dashed", color: t.text, opacity: 0.7 }, tooltip: { show: false } });
+      return { ...base, legend: { ...base.legend, show: !!spec.hue || !!spec.trend },
+        tooltip: { ...base.tooltip, trigger: "item", formatter: (p) => `${plain(p.seriesName)}\n${plain(spec.x)}: ${fnum(p.value[0])}\n${plain(spec.y)}: ${fnum(p.value[1])}` },
+        xAxis: { ...axis, type: spec.logX ? "log" : "value", name: spec.x, nameGap: 32, scale: true },
+        yAxis: { ...axis, type: spec.logY ? "log" : "value", name: spec.y, nameGap: 50, scale: true },
+        dataZoom: zoom(["x", "y"]), series };
+    }
+    case "heat": {
+      const k = spec.columns.length;
+      const data = [];
+      spec.matrix.forEach((row, i) => row.forEach((v, j) => { if (j <= i && v != null) data.push([j, i, Number(v.toFixed(2))]); }));
+      return { ...base, legend: { show: false }, grid: { left: 120, right: 80, top: 20, bottom: 110 },
+        tooltip: { ...base.tooltip, formatter: (p) => `${plain(spec.columns[p.value[1]])} × ${plain(spec.columns[p.value[0]])}\nr = ${p.value[2].toFixed(2)}\n(click to plot them)` },
+        xAxis: { ...axis, type: "category", data: spec.columns, axisLabel: { color: t.muted, rotate: 35, interval: 0 }, splitArea: { show: false } },
+        yAxis: { ...axis, type: "category", data: spec.columns, inverse: true, axisLabel: { color: t.muted, interval: 0 } },
+        visualMap: { min: -1, max: 1, calculable: true, orient: "vertical", right: 8, top: "middle", textStyle: { color: t.muted },
+          inRange: { color: [t.negative, t.surface, t.positive] } },
+        series: [{ type: "heatmap", data, label: { show: k <= 12, color: t.text, fontSize: 11 }, itemStyle: { borderColor: t.surface, borderWidth: 1 } }] };
+    }
+    case "line":
+      return { ...base, legend: { show: false }, tooltip: { ...base.tooltip, trigger: "axis" },
+        xAxis: { ...axis, type: "category", data: spec.points.map((p) => p[0]), name: spec.x, nameGap: 32, boundaryGap: false, axisLabel: { color: t.muted, hideOverlap: true } },
+        yAxis: { ...axis, type: "value", name: spec.y, nameGap: 50, scale: true },
+        dataZoom: spec.points.length > 30 ? [{ type: "inside" }, { type: "slider", height: 18, bottom: 6, borderColor: t.border, textStyle: { color: t.muted } }] : [{ type: "inside" }],
+        grid: { ...base.grid, bottom: spec.points.length > 30 ? 70 : 56 },
+        series: [{ type: "line", name: spec.how, data: spec.points.map((p) => p[1]), showSymbol: spec.points.length <= 60, smooth: false, lineStyle: { width: 2 } }] };
+    case "bar": {
+      const pct = spec.percentOf;
+      const label = { show: spec.labels.length <= 30, position: spec.horizontal ? "right" : "top", color: t.muted, fontSize: 11,
+        formatter: (p) => (pct ? `${((p.value / pct) * 100).toFixed(0)}%` : fnum(p.value)) };
+      const cat = { ...axis, type: "category", data: spec.labels, inverse: spec.horizontal, axisLabel: { color: t.muted, hideOverlap: !spec.horizontal, interval: spec.horizontal ? 0 : "auto", width: 140, overflow: "truncate" } };
+      const val = { ...axis, type: "value", name: spec.valueLabel, nameGap: spec.horizontal ? 30 : 50 };
+      return { ...base, legend: { show: false }, tooltip: { ...base.tooltip, trigger: "axis", axisPointer: { type: "shadow" },
+          formatter: (ps) => { const p = ps[0]; return `${plain(p.name)}\n${plain(spec.valueLabel)}: ${fnum(p.value)}${pct ? ` (${((p.value / pct) * 100).toFixed(1)}%)` : ""}\n(click for options)`; } },
+        grid: spec.horizontal ? { left: 150, right: 56, top: 20, bottom: 44 } : base.grid,
+        xAxis: spec.horizontal ? val : cat, yAxis: spec.horizontal ? cat : val,
+        series: [{ type: "bar", data: spec.values, label, barMaxWidth: 56, itemStyle: { borderRadius: spec.horizontal ? [0, 4, 4, 0] : [4, 4, 0, 0] } }] };
+    }
+    case "pair": {
+      const k = spec.columns.length;
+      const gap = 4, cell = 100 / k;
+      const grids = [], xAxes = [], yAxes = [], series = [];
+      const groups = spec.groups || [null];
+      for (let i = 0; i < k; i++) {
+        for (let j = 0; j <= i; j++) {
+          const idx = grids.length;
+          grids.push({ left: `${6 + j * cell * 0.92}%`, top: `${4 + i * cell * 0.88}%`, width: `${cell * 0.92 - gap}%`, height: `${cell * 0.88 - gap}%` });
+          const showX = i === k - 1, showY = j === 0;
+          xAxes.push({ ...axis, gridIndex: idx, type: i === j ? "category" : "value", scale: true, name: showX ? spec.columns[j] : "", nameGap: 22,
+            axisLabel: { show: showX, color: t.muted, fontSize: 9, hideOverlap: true }, splitLine: { show: false },
+            data: i === j ? spec.edges[spec.columns[j]].slice(0, -1).map((e) => fnum(e)) : undefined });
+          yAxes.push({ ...axis, gridIndex: idx, type: "value", scale: i !== j, name: showY && i !== j ? spec.columns[i] : "", nameGap: 36,
+            axisLabel: { show: showY && i !== j, color: t.muted, fontSize: 9 }, splitLine: { show: false } });
+          if (i === j) {
+            const edges = spec.edges[spec.columns[i]];
+            groups.forEach((g) => {
+              const counts = new Array(edges.length - 1).fill(0);
+              for (const r of spec.rows) {
+                if (g !== null && r[k] !== g) continue;
+                const v = r[i];
+                if (v == null) continue;
+                let b = edges.findIndex((e, q) => q < edges.length - 1 && v >= e && v <= edges[q + 1]);
+                if (b < 0) b = v < edges[0] ? 0 : edges.length - 2;
+                counts[b] += 1;
+              }
+              series.push({ type: "bar", name: g ?? spec.columns[i], xAxisIndex: idx, yAxisIndex: idx, data: counts, barCategoryGap: "8%", barGap: "-100%",
+                itemStyle: { opacity: groups.length > 1 ? 0.55 : 0.85, color: t.palette[Math.max(0, groups.indexOf(g)) % t.palette.length] } });
+            });
+          } else {
+            groups.forEach((g, gi) => series.push({ type: "scatter", name: g ?? "rows", xAxisIndex: idx, yAxisIndex: idx, symbolSize: 4,
+              itemStyle: { opacity: 0.6, color: t.palette[gi % t.palette.length] },
+              data: spec.rows.filter((r) => g === null || r[k] === g).map((r) => [r[j], r[i]]) }));
+          }
+        }
+      }
+      return { ...base, legend: { ...base.legend, show: groups.length > 1, data: groups.filter(Boolean) },
+        tooltip: { ...base.tooltip, trigger: "item" }, grid: grids, xAxis: xAxes, yAxis: yAxes, series };
+    }
+    default:
+      return {};
+  }
+}
+
+/** Text for rich-text tooltips: braces and pipes are rich-text syntax, so drop them from data values. */
+const plain = (text) => String(text).replace(/[{}|]/g, " ");
+
+/* ---- click → filter / compare ----------------------------------------- */
+
+function chartActions(items) {
+  const box = el("div", { class: "chart-actions", role: "menu" },
+    items.map(([label, fn]) => el("button", { class: "btn btn-sm", role: "menuitem", onclick: () => { box.remove(); fn(); } }, label)),
+    el("button", { class: "icon-btn", title: "Close", "aria-label": "Close", onclick: () => box.remove() }, icon("i-x")));
+  document.querySelectorAll(".chart-actions").forEach((n) => n.remove());
+  $("chart-output").append(box);
+  return box;
+}
+
+function compareSegment(conditions) {
+  app.forms.segment = { count: conditions.length };
+  conditions.forEach((c, i) => Object.assign(app.forms.segment, { [`c${i}_column`]: c.column, [`c${i}_operator`]: c.operator, [`c${i}_value`]: String(c.value) }));
+  showSection("analyze");
+  selectAnalyzeTab("segment");
+  renderSegmentFields(true);
+}
+
+function keepCategory(column, value) {
+  openFix({ method: "FILTER_ROWS", params: { mode: "keep", column, operator: "==", value: String(value) } });
+}
+
+function onChartClick(spec, p) {
+  const at = (box) => {
+    const e = p.event && p.event.event;
+    if (!e) return;
+    const rect = $("chart-output").getBoundingClientRect();
+    box.style.left = `${Math.min(rect.width - 260, Math.max(8, e.clientX - rect.left + 8))}px`;
+    box.style.top = `${Math.max(8, e.clientY - rect.top + 8)}px`;
+  };
+  if (spec.type === "bar" && spec.column && p.componentType === "series") {
+    const value = spec.labels[p.dataIndex];
+    at(chartActions([[`Keep only ${spec.column} = ${value}`, () => keepCategory(spec.column, value)],
+      [`Compare ${value} with the rest`, () => compareSegment([{ column: spec.column, operator: "==", value }])]]));
+  } else if (spec.type === "box" && spec.x && p.seriesType === "boxplot") {
+    const value = spec.boxes[p.dataIndex].name;
+    at(chartActions([[`Keep only ${spec.x} = ${value}`, () => keepCategory(spec.x, value)],
+      [`Compare ${value} with the rest`, () => compareSegment([{ column: spec.x, operator: "==", value }])]]));
+  } else if (spec.type === "hist" && p.componentType === "series") {
+    const lo = spec.edges[p.dataIndex], hi = spec.edges[p.dataIndex + 1];
+    at(chartActions([[`Compare ${spec.x} ${fnum(lo)}–${fnum(hi)} with the rest`,
+      () => compareSegment([{ column: spec.x, operator: ">=", value: lo }, { column: spec.x, operator: "<=", value: hi }])]]));
+  } else if (spec.type === "heat" && p.componentType === "series") {
+    const [j, i] = p.value;
+    if (i !== j) {
+      selectChart("SCAT", { x: spec.columns[j], y: spec.columns[i] });
+    }
+  }
+}
+
+for (const b of document.querySelectorAll("#chart-mode button")) b.addEventListener("click", () => setChartMode(b.dataset.mode));

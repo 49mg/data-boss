@@ -46,6 +46,26 @@ def _strength(r):
     return f"{word} {'positive' if r > 0 else 'negative'} relationship"
 
 
+MAX_POINTS = 4000
+
+
+def _num(v):
+    """JSON-safe float."""
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return None
+    return v if np.isfinite(v) else None
+
+
+def _lab(v):
+    if isinstance(v, pd.Timestamp):
+        return v.isoformat()
+    if isinstance(v, (float, np.floating)):
+        return _f(v)
+    return str(v)
+
+
 def _is_numeric(s):
     return pd.api.types.is_numeric_dtype(s) and not pd.api.types.is_bool_dtype(s)
 
@@ -142,6 +162,10 @@ class DataVisualizer(BaseDataVisualizer):
                     xytext=(4, -12), textcoords="offset points", fontsize=9, alpha=0.8)
         ax.set_ylabel("Count")
         self._title(ax, title)
+        edges = np.histogram_bin_edges(s.astype(float), bins=bins_v)
+        groups = ([(str(g), d[column]) for g, d in data.groupby(hue, observed=True)] if hue else [(column, s)])
+        self.spec = {"type": "hist", "x": str(column), "edges": [_num(e) for e in edges], "median": _num(median),
+                     "series": [{"name": n, "counts": np.histogram(v.astype(float), bins=edges)[0].tolist()} for n, v in groups]}
 
         q1, q3 = s.quantile(0.25), s.quantile(0.75)
         skew = s.skew() if len(s) > 2 else 0
@@ -190,6 +214,14 @@ class DataVisualizer(BaseDataVisualizer):
         self._title(ax, title)
 
         s = data[y]
+        boxes = []
+        for name, v in ([(g, data.loc[data[x] == g, y]) for g in order] if order else [(y, s)]):
+            a, b = v.quantile(0.25), v.quantile(0.75)
+            lo_w, hi_w = v[v >= a - 1.5 * (b - a)].min(), v[v <= b + 1.5 * (b - a)].max()
+            out = v[(v < lo_w) | (v > hi_w)]
+            boxes.append({"name": str(name), "n": int(len(v)), "stats": [_num(lo_w), _num(a), _num(v.median()), _num(b), _num(hi_w)],
+                          "outliers": [_num(o) for o in out.head(200)]})
+        self.spec = {"type": "box", "x": str(x) if x else None, "y": str(y), "boxes": boxes, "log": bool(log)}
         q1, q3 = s.quantile(0.25), s.quantile(0.75)
         iqr = q3 - q1
         outliers = int(((s < q1 - 1.5 * iqr) | (s > q3 + 1.5 * iqr)).sum())
@@ -230,8 +262,14 @@ class DataVisualizer(BaseDataVisualizer):
         sns.scatterplot(data=data, x=x, y=y, hue=hue, ax=ax, alpha=alpha, s=size, edgecolor="none")
         xv, yv = data[x].astype(float), data[y].astype(float)
         r = xv.corr(yv) if n > 2 else float("nan")
+        shown = data if n <= MAX_POINTS else data.sample(MAX_POINTS, random_state=0)
+        groups = [(str(g), d) for g, d in shown.groupby(hue, observed=True)] if hue else [(y, shown)]
+        self.spec = {"type": "scatter", "x": str(x), "y": str(y), "hue": str(hue) if hue else None,
+                     "sampled": n > MAX_POINTS, "logX": bool(log_x), "logY": bool(log_y),
+                     "series": [{"name": g, "points": [[_num(a), _num(b)] for a, b in zip(d[x], d[y], strict=True)]} for g, d in groups]}
         if trend and n > 2 and xv.nunique() > 1:
             m, b = np.polyfit(xv, yv, 1)
+            self.spec["trend"] = [[_num(xv.min()), _num(m * xv.min() + b)], [_num(xv.max()), _num(m * xv.max() + b)]]
             xs = np.linspace(xv.min(), xv.max(), 100)
             ax.plot(xs, m * xs + b, color=plt.rcParams["text.color"], linewidth=1.4, alpha=0.75,
                     linestyle="--", label=f"trend (r = {r:.2f})")
@@ -279,6 +317,8 @@ class DataVisualizer(BaseDataVisualizer):
         side = min(12.0, max(5.5, 0.75 * k + 3))
         fig, ax = self._fig((side + 1.5, side))
         mask = np.triu(np.ones_like(corr, dtype=bool), k=1)
+        self.spec = {"type": "heat", "columns": [str(c) for c in cols], "method": method,
+                     "matrix": [[_num(v) for v in row] for row in corr.to_numpy()]}
         sns.heatmap(corr, mask=mask, annot=k <= 12, fmt=".2f", cmap=self.heatmap_cmap, vmin=-1, vmax=1,
                     square=True, linewidths=0.5, linecolor=plt.rcParams["axes.facecolor"],
                     cbar_kws={"shrink": 0.75}, ax=ax, annot_kws={"fontsize": 9})
@@ -338,6 +378,9 @@ class DataVisualizer(BaseDataVisualizer):
         series = series.dropna()
         if series.empty:
             raise ValueError("Nothing to plot after grouping.")
+        fq = freq if is_dt else ""
+        self.spec = {"type": "line", "x": str(x), "y": str(y), "how": how, "time": bool(is_dt),
+                     "points": [[_x(i, fq) if is_dt else _lab(i), _num(v)] for i, v in series.items()]}
         fig, ax = self._fig()
         ax.plot(series.index, series.values, linewidth=1.8, marker="o" if len(series) <= 40 else None, markersize=4)
         ax.set_xlabel(x)
@@ -371,6 +414,8 @@ class DataVisualizer(BaseDataVisualizer):
             horizontal = n > 8 or max((len(lb) for lb in labels), default=0) > 12
         size = (self.figsize[0], max(self.figsize[1], 0.32 * n + 1.2)) if horizontal else self.figsize
         fig, ax = self._fig(size)
+        self.spec = {"type": "bar", "labels": labels, "values": [_num(v) for v in series.values], "valueLabel": value_label,
+                     "horizontal": bool(horizontal), "percentOf": _num(pct_total or series.sum()) if fmt_pct else None}
         color = plt.rcParams["axes.prop_cycle"].by_key()["color"][0]
         if horizontal:
             bars = ax.barh(labels[::-1], series.values[::-1], color=color)
@@ -409,6 +454,7 @@ class DataVisualizer(BaseDataVisualizer):
             value_label, how = (y if data[x].is_unique else f"{agg} of {y}"), agg
         series = self._sort_limit(series, sort, int(top_n or 15), notes)
         fig, horiz, size = self._bars(series, title, value_label, horizontal, labels)
+        self.spec["column"] = str(x)
 
         top_label, top_val = series.idxmax(), series.max()
         low_label, low_val = series.idxmin(), series.min()
@@ -440,6 +486,7 @@ class DataVisualizer(BaseDataVisualizer):
             raise ValueError("This column has no values.")
         series = self._sort_limit(counts, sort, int(top_n or 15), notes)
         fig, horiz, size = self._bars(series, title, "Count", horizontal, True, fmt_pct=percent, pct_total=counts.sum())
+        self.spec["column"] = str(column)
         total = counts.sum()
         insights.append(f"{len(counts):,} distinct values across {total:,} rows.")
         insights.append(f"Most common: {counts.index[0]} ({counts.iloc[0]:,}, {counts.iloc[0] / total:.0%}).")
@@ -482,6 +529,12 @@ class DataVisualizer(BaseDataVisualizer):
         if len(data) > 2000:
             data = data.sample(2000, random_state=0)
             notes.append("Sampled 2,000 rows to keep the pair plot fast.")
+        small = data if len(data) <= 600 else data.sample(600, random_state=0)
+        self.spec = {"type": "pair", "columns": [str(c) for c in cols], "hue": str(hue) if hue else None,
+                     "groups": [str(h) for h in small[hue].unique()] if hue else None,
+                     "rows": [[_num(v) for v in r] + ([str(h)] if hue else []) for r, h in
+                              zip(small[cols].to_numpy(), small[hue] if hue else [None] * len(small), strict=True)],
+                     "edges": {str(c): [_num(e) for e in np.histogram_bin_edges(data[c].astype(float), bins=12)] for c in cols}}
         g = sns.pairplot(data, vars=cols, hue=hue, corner=True, height=min(2.6, 11 / len(cols)),
                          plot_kws={"s": 14, "alpha": 0.6, "edgecolor": "none"}, diag_kws={"linewidth": 0.6})
         if title:
@@ -502,6 +555,7 @@ class DataVisualizer(BaseDataVisualizer):
         """Draw a chart. Returns {"data": bytes|str, "insights", "notes", "code"}."""
         if kind not in self.methods:
             raise ValueError(f"Unknown chart type: {kind}")
+        self.spec = None
         fig, insights, notes, code = self.methods[kind](**(params or {}))
         try:
             fig.tight_layout()
@@ -514,7 +568,7 @@ class DataVisualizer(BaseDataVisualizer):
                 data = buffer.getvalue()
         finally:
             plt.close(fig)
-        return {"data": data, "insights": insights, "notes": notes, "code": code}
+        return {"data": data, "insights": insights, "notes": notes, "code": code, "spec": self.spec}
 
     def render(self, method_key, **params):
         """PNG bytes for a chart (kept for programmatic use)."""
