@@ -386,6 +386,7 @@ function setState(snapshot) {
   if (app.page > maxPage) app.page = maxPage;
 
   renderStats();
+  renderSourceInfo();
   renderProfile();
   renderCleanFields();
   renderHistory();
@@ -494,31 +495,135 @@ function onLoaded(snapshot) {
   toast("success", `Loaded ${snapshot.fileName}`);
 }
 
-async function openCsv() {
+const OPENABLE = [".csv", ".tsv", ".tab", ".txt", ".xlsx", ".xlsm", ".parquet", ".pq", ".json", ".jsonl", ".ndjson"];
+
+/** Ask which sheet to open; resolves to the sheet name or null if cancelled. */
+function pickSheet(sheets, fileName) {
+  return new Promise((resolve) => {
+    const dlg = $("sheet-dialog");
+    $("sheet-sub").textContent = `${fileName} has ${sheets.length} sheets. Which one do you want to open?`;
+    let chosen = null;
+    $("sheet-list").replaceChildren(
+      ...sheets.map((name) =>
+        el("button", { onclick: () => { chosen = name; dlg.close(); } }, icon("i-table"), el("span", { text: name })))
+    );
+    dlg.addEventListener("close", () => resolve(chosen), { once: true });
+    dlg.showModal();
+  });
+}
+
+/** Handle a load result, asking for a sheet when an Excel file has several. */
+async function handleLoadResult(res) {
+  if (!res) return; // dialog cancelled
+  if (res.needsSheet) {
+    const sheet = await pickSheet(res.sheets, res.path.split(/[\\/]/).pop());
+    if (!sheet) return;
+    res = await withBusy(window.api.loadPath(res.path, sheet));
+  }
+  onLoaded(res);
+}
+
+async function openFile() {
   try {
-    onLoaded(await withBusy(window.api.openCsv()));
+    await handleLoadResult(await withBusy(window.api.openFile()));
   } catch (err) {
     toast("error", cleanError(err));
   }
 }
 
 async function loadDroppedFile(file) {
-  if (!file.name.toLowerCase().endsWith(".csv")) {
-    toast("error", "Please drop a .csv file.");
+  const name = file.name.toLowerCase();
+  if (!OPENABLE.some((ext) => name.endsWith(ext))) {
+    toast("error", name.endsWith(".xls")
+      ? "Old Excel .xls files are not supported. Save it as .xlsx and drop that."
+      : "Drop a CSV, Excel (.xlsx), Parquet or JSON file.");
     return;
   }
   try {
-    onLoaded(await withBusy(window.api.loadPath(window.api.pathForFile(file))));
+    await handleLoadResult(await withBusy(window.api.loadPath(window.api.pathForFile(file))));
   } catch (err) {
     toast("error", cleanError(err));
   }
 }
 
-async function exportCsv() {
+async function exportData(format = "csv") {
+  $("export-menu").hidden = true;
+  $("btn-export").setAttribute("aria-expanded", "false");
   try {
-    const base = (app.state.fileName || "data.csv").replace(/\.csv$/i, "");
-    const res = await withBusy(window.api.exportCsv(`${base}_cleaned.csv`));
+    const base = (app.state.fileName || "data").replace(/\.[^.]+$/, "");
+    const res = await withBusy(window.api.exportData(`${base}_cleaned.${format}`, format));
     if (res) toast("success", `Saved ${res.path}`);
+  } catch (err) {
+    toast("error", cleanError(err));
+  }
+}
+
+function toggleExportMenu(force) {
+  const menu = $("export-menu");
+  const open = force ?? menu.hidden;
+  menu.hidden = !open;
+  $("btn-export").setAttribute("aria-expanded", String(open));
+  if (open) menu.querySelector("button").focus();
+}
+
+/* ---- import details and settings ---------------------------------------- */
+
+const SEPARATOR_LABELS = { ",": "comma", ";": "semicolon", "\t": "tab", "|": "pipe" };
+const ENCODING_LABELS = { "utf-8-sig": "UTF-8", "utf-8": "UTF-8", cp1256: "Arabic (Windows-1256)", "latin-1": "Western (Latin-1)" };
+const FORMAT_LABELS = { csv: "CSV", excel: "Excel", parquet: "Parquet", json: "JSON", jsonl: "JSON Lines" };
+
+function renderSourceInfo() {
+  const src = app.state.source || {};
+  const box = $("source-info");
+  if (!src.format) return box.replaceChildren();
+  const chipsList = [FORMAT_LABELS[src.format] || src.format];
+  if (src.format === "csv") {
+    chipsList.push(`${SEPARATOR_LABELS[src.sep] || src.sep} separated`, ENCODING_LABELS[src.encoding] || src.encoding);
+    if (src.header === false) chipsList.push("no header row");
+  }
+  if (src.format === "excel" && src.sheet) chipsList.push(`sheet “${src.sheet}”`);
+  const canConfigure = src.format === "csv" || (src.format === "excel" && (src.sheets || []).length > 1);
+  box.replaceChildren(
+    ...[
+      ...chipsList.map((t) => el("span", { class: "chip", text: t })),
+      canConfigure ? el("button", { class: "btn btn-sm btn-ghost", onclick: openImportSettings }, "Import settings…") : null,
+      src.notes && src.notes.length ? el("div", { class: "source-notes" }, src.notes.map((n) => el("p", { text: n }))) : null,
+    ].filter(Boolean)
+  );
+}
+
+let importValues = {};
+
+function openImportSettings() {
+  const src = app.state.source || {};
+  const memory = {};
+  let specs;
+  if (src.format === "excel") {
+    memory.sheet = src.sheet || (src.sheets || [])[0];
+    specs = [{ key: "sheet", label: "Sheet", type: "select", options: src.sheets || [] }];
+  } else {
+    memory.sep = src.sep;
+    memory.encoding = src.encoding === "utf-8" ? "utf-8-sig" : src.encoding;
+    memory.header = src.header !== false;
+    specs = [
+      { key: "sep", label: "Column separator", type: "select", options: toOptions([[",", "Comma ( , )"], [";", "Semicolon ( ; )"], ["\t", "Tab"], ["|", "Pipe ( | )"]]) },
+      { key: "encoding", label: "Text encoding", type: "select",
+        options: toOptions([["utf-8-sig", "UTF-8 (most files)"], ["cp1256", "Arabic (Windows-1256)"], ["latin-1", "Western (Latin-1)"]]),
+        hint: "If Arabic text looks garbled, try Windows-1256." },
+      TOGGLE("header", "First row has column names", true),
+    ];
+  }
+  importValues = buildForm($("import-fields"), specs, memory, (v) => (importValues = v));
+  $("import-dialog").showModal();
+}
+
+async function applyImportSettings() {
+  const src = app.state.source || {};
+  const args = src.format === "excel" ? { sheet: importValues.sheet } : { options: { ...importValues } };
+  try {
+    const res = await withBusy(window.api.call("reload", args));
+    $("import-dialog").close();
+    onLoaded(res);
   } catch (err) {
     toast("error", cleanError(err));
   }
@@ -1711,14 +1816,14 @@ function renderQueryChartFields(reset = false) {
     s.value = value;
     return s;
   };
-  $("query-chart-fields").replaceChildren(
+  $("query-chart-fields").replaceChildren(...[
     select("Chart type", cfg.kind, QUERY_CHART_KINDS, (v) => { cfg.kind = v; renderQueryChartFields(); }),
     select("X axis", cfg.x, cols.map((c) => [c, c]), (v) => { cfg.x = v; drawQueryChart(); }),
     needsY
       ? select("Y axis", cfg.y || "", [...(cfg.kind === "BAR" ? [["", "Number of rows"]] : []), ...cols.map((c) => [c, c])],
           (v) => { cfg.y = v; drawQueryChart(); })
-      : null
-  );
+      : null,
+  ].filter(Boolean));
   drawQueryChart();
 }
 
@@ -2181,9 +2286,22 @@ function showChartCode() {
 /* wiring                                                               */
 /* ------------------------------------------------------------------ */
 
-$("btn-open").addEventListener("click", openCsv);
-$("btn-open-empty").addEventListener("click", openCsv);
-$("btn-export").addEventListener("click", exportCsv);
+$("btn-open").addEventListener("click", openFile);
+$("btn-open-empty").addEventListener("click", openFile);
+$("btn-export").addEventListener("click", () => toggleExportMenu());
+for (const item of document.querySelectorAll("#export-menu [data-format]")) {
+  item.addEventListener("click", () => exportData(item.dataset.format));
+}
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".menu-wrap")) toggleExportMenu(false);
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("export-menu").hidden) toggleExportMenu(false);
+});
+$("sheet-close").addEventListener("click", () => $("sheet-dialog").close());
+$("import-close").addEventListener("click", () => $("import-dialog").close());
+$("import-cancel").addEventListener("click", () => $("import-dialog").close());
+$("import-apply").addEventListener("click", applyImportSettings);
 $("btn-undo").addEventListener("click", undo);
 $("btn-undo-2").addEventListener("click", undo);
 $("btn-do").addEventListener("click", doClean);
@@ -2309,10 +2427,10 @@ window.addEventListener("keydown", (e) => {
   const key = e.key.toLowerCase();
   if (key === "o") {
     e.preventDefault();
-    openCsv();
+    openFile();
   } else if (key === "s" && app.state) {
     e.preventDefault();
-    exportCsv();
+    exportData("csv");
   } else if (key === "z" && app.state && app.state.canUndo && tag !== "INPUT" && tag !== "TEXTAREA") {
     e.preventDefault();
     undo();

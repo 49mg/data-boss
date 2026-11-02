@@ -133,24 +133,41 @@ function createWindow() {
 ipcMain.handle("backend", (_e, cmd, args, tag) => callBackend(cmd, args, tag || null));
 ipcMain.handle("cancel", (_e, tag) => cancelTagged(String(tag)));
 
-ipcMain.handle("open-csv", async () => {
+const OPEN_FILTERS = [
+  { name: "Data files", extensions: ["csv", "tsv", "tab", "txt", "xlsx", "xlsm", "parquet", "pq", "json", "jsonl", "ndjson"] },
+  { name: "CSV / TSV", extensions: ["csv", "tsv", "tab", "txt"] },
+  { name: "Excel", extensions: ["xlsx", "xlsm"] },
+  { name: "Parquet", extensions: ["parquet", "pq"] },
+  { name: "JSON", extensions: ["json", "jsonl", "ndjson"] },
+];
+
+const EXPORT_FORMATS = {
+  csv: { title: "Export CSV", filter: { name: "CSV file", extensions: ["csv"] } },
+  xlsx: { title: "Export Excel workbook", filter: { name: "Excel workbook", extensions: ["xlsx"] } },
+  parquet: { title: "Export Parquet", filter: { name: "Parquet file", extensions: ["parquet"] } },
+};
+
+ipcMain.handle("open-file", async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog(win, {
-    title: "Open CSV",
+    title: "Open data file",
     properties: ["openFile"],
-    filters: [{ name: "CSV files", extensions: ["csv"] }],
+    filters: OPEN_FILTERS,
   });
   if (canceled || !filePaths.length) return null;
   return callBackend("load", { path: filePaths[0] });
 });
 
-ipcMain.handle("export-csv", async (_e, suggestedName) => {
+ipcMain.handle("export-data", async (_e, suggestedName, format = "csv") => {
+  const kind = EXPORT_FORMATS[format] || EXPORT_FORMATS.csv;
   const { canceled, filePath } = await dialog.showSaveDialog(win, {
-    title: "Export CSV",
-    defaultPath: suggestedName || "data.csv",
-    filters: [{ name: "CSV files", extensions: ["csv"] }],
+    title: kind.title,
+    defaultPath: suggestedName || `data.${format}`,
+    filters: [kind.filter],
   });
   if (canceled || !filePath) return null;
-  return callBackend("export", { path: filePath });
+  const ext = `.${kind.filter.extensions[0]}`;
+  const target = filePath.toLowerCase().endsWith(ext) ? filePath : filePath + ext;
+  return callBackend("export", { path: target });
 });
 
 ipcMain.handle("save-image", async (_e, dataUrl, suggestedName) => {

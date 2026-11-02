@@ -101,11 +101,18 @@
             <button id="btn-undo" class="btn btn-icon" disabled title="Undo last step (Ctrl+Z)" aria-label="Undo last step">
               <svg class="icon"><use href="#i-undo"/></svg>
             </button>
-            <button id="btn-export" class="btn" disabled title="Export cleaned CSV (Ctrl+S)">
-              <svg class="icon"><use href="#i-download"/></svg>Export
-            </button>
-            <button id="btn-open" class="btn btn-primary" title="Open a CSV file (Ctrl+O)">
-              <svg class="icon"><use href="#i-folder"/></svg>Open CSV
+            <div class="menu-wrap">
+              <button id="btn-export" class="btn" disabled title="Export the cleaned data (Ctrl+S for CSV)" aria-haspopup="menu" aria-expanded="false">
+                <svg class="icon"><use href="#i-download"/></svg>Export
+              </button>
+              <div class="menu" id="export-menu" role="menu" hidden>
+                <button role="menuitem" data-format="csv"><strong>CSV</strong><span>Opens anywhere</span></button>
+                <button role="menuitem" data-format="xlsx"><strong>Excel workbook</strong><span>.xlsx, up to 1,048,575 rows</span></button>
+                <button role="menuitem" data-format="parquet"><strong>Parquet</strong><span>Compact, keeps column types</span></button>
+              </div>
+            </div>
+            <button id="btn-open" class="btn btn-primary" title="Open a CSV, Excel, Parquet or JSON file (Ctrl+O)">
+              <svg class="icon"><use href="#i-folder"/></svg>Open file
             </button>
           </div>
         </header>
@@ -116,10 +123,10 @@
             <div class="empty-card">
               <div class="empty-icon"><svg class="icon"><use href="#i-upload"/></svg></div>
               <h1>Open a dataset</h1>
-              <p>Drop a CSV file anywhere in this window, or pick one from disk. Files up to 200&nbsp;MB.</p>
+              <p>Drop a file anywhere in this window, or pick one from disk: CSV, Excel, Parquet or JSON, up to 200&nbsp;MB.</p>
               <div class="empty-actions">
                 <button id="btn-open-empty" class="btn btn-primary btn-lg">
-                  <svg class="icon"><use href="#i-folder"/></svg>Choose a CSV file
+                  <svg class="icon"><use href="#i-folder"/></svg>Choose a file
                 </button>
                 <span class="kbd-hint"><kbd>Ctrl</kbd><kbd>O</kbd></span>
               </div>
@@ -137,6 +144,7 @@
               <h1>Data</h1>
               <p>Overview of the working dataset. Cleaning steps update everything here.</p>
             </div>
+            <div id="source-info" class="source-info"></div>
             <div class="stats" id="stats"></div>
             <div class="card card-flush">
               <div class="card-head">
@@ -370,6 +378,32 @@
         </main>
       </div>
     </div>
+
+    <dialog id="sheet-dialog" class="code-dialog app-dialog" aria-labelledby="sheet-title">
+      <div class="code-dialog-head">
+        <div>
+          <h2 id="sheet-title">Choose a sheet</h2>
+          <p id="sheet-sub">This workbook has several sheets. Which one do you want to open?</p>
+        </div>
+        <button class="toast-close" id="sheet-close" aria-label="Cancel"><svg class="icon"><use href="#i-x"/></svg></button>
+      </div>
+      <div id="sheet-list" class="sheet-list"></div>
+    </dialog>
+
+    <dialog id="import-dialog" class="code-dialog app-dialog" aria-labelledby="import-title">
+      <div class="code-dialog-head">
+        <div>
+          <h2 id="import-title">Import settings</h2>
+          <p>Re-read the file with different settings. This starts over and clears the cleaning history.</p>
+        </div>
+        <button class="toast-close" id="import-close" aria-label="Close"><svg class="icon"><use href="#i-x"/></svg></button>
+      </div>
+      <div id="import-fields" class="fields fields-stack"></div>
+      <div class="row code-actions">
+        <button id="import-apply" class="btn btn-primary"><svg class="icon"><use href="#i-play"/></svg>Re-import</button>
+        <button id="import-cancel" class="btn">Cancel</button>
+      </div>
+    </dialog>
 
     <dialog id="code-dialog" class="code-dialog" aria-labelledby="code-title">
       <div class="code-dialog-head">

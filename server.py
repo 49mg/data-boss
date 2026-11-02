@@ -28,6 +28,7 @@ from cycler import cycler
 from matplotlib.colors import LinearSegmentedColormap
 
 from src import DataCleaner, DataInspector, DataVisualizer
+from src.files import FileFormatError, excel_sheets, read_table, write_table
 from src.inspectors import _label
 from src.query import example_queries, quote_ident, run_query, run_query_full, sql_code
 
@@ -126,6 +127,8 @@ class Session:
     def __init__(self):
         self.path = None
         self.df = None
+        self.read_code = ""
+        self.source = {}
         self.history = []
         self.log = []
 
@@ -157,6 +160,7 @@ class Session:
         return {
             "path": self.path,
             "fileName": os.path.basename(self.path) if self.path else None,
+            "source": self.source,
             "shape": list(df.shape),
             "missingCells": int(df.isna().sum().sum()),
             "duplicateRows": int(df.duplicated().sum()),
@@ -169,7 +173,9 @@ class Session:
 
     # ---- commands --------------------------------------------------------
 
-    def cmd_load(self, path):
+    def cmd_load(self, path, sheet=None, options=None):
+        """Open a data file. For Excel files with several sheets and no sheet chosen,
+        returns {"needsSheet": True, "sheets": [...]} without changing the session."""
         size = os.path.getsize(path)
         if size > MAX_FILE_SIZE_MB * 1024 * 1024:
             raise ValueError(
@@ -177,15 +183,29 @@ class Session:
                 f"Maximum allowed size is {MAX_FILE_SIZE_MB} MB."
             )
         try:
-            df = pd.read_csv(path)
+            if sheet is None and path.lower().endswith((".xlsx", ".xlsm")):
+                sheets = excel_sheets(path)
+                if len(sheets) > 1:
+                    return {"needsSheet": True, "sheets": sheets, "path": path}
+            df, read_code, notes, info = read_table(path, sheet=sheet, options=options)
+        except FileFormatError:
+            raise
         except Exception as e:  # noqa: BLE001 - surface any parse error to the UI
-            raise ValueError(f"Could not read the CSV file: {e}") from e
+            raise ValueError(f"Could not read the file: {e}") from e
 
         self.path = path
         self.df = df
+        self.read_code = read_code
+        self.source = {**info, "notes": notes, "sheets": excel_sheets(path) if info["format"] == "excel" else None}
         self.history = []
         self.log = []
         return self.snapshot()
+
+    def cmd_reload(self, sheet=None, options=None):
+        """Re-read the current file with different import settings (clears history)."""
+        if not self.path:
+            raise ValueError("No dataset loaded. Open a file first.")
+        return self.cmd_load(self.path, sheet=sheet, options=options)
 
     def cmd_state(self):
         return self.snapshot()
@@ -311,7 +331,7 @@ class Session:
             "import numpy as np",
             "import pandas as pd",
             "",
-            f"df = pd.read_csv({name!r})",
+            *self.read_code.splitlines(),
             "",
         ]
         for entry in self.log:
@@ -330,10 +350,8 @@ class Session:
         return {"message": f"Last step undone.{undone_msg}", "state": self.snapshot()}
 
     def cmd_export(self, path):
-        df = self.require_df()
-        with open(path, "wb") as f:
-            f.write(DataCleaner(df).export_data())
-        return {"path": path}
+        fmt = write_table(self.require_df(), path)
+        return {"path": path, "format": fmt}
 
     def _render_chart(self, df, kind, params, style, width, fmt, prelude=()):
         params = {k: v for k, v in (params or {}).items() if v not in (None, "")}
@@ -341,14 +359,13 @@ class Session:
         with mpl.rc_context(rc) if rc else nullcontext():
             out = DataVisualizer(df, heatmap_cmap=cmap, width=width).render_chart(kind, params, fmt=fmt)
 
-        name = os.path.basename(self.path) if self.path else "data.csv"
         code = "\n".join([
             "import matplotlib.pyplot as plt",
             "import numpy as np",
             "import pandas as pd",
             "import seaborn as sns",
             "",
-            f"df = pd.read_csv({name!r})",
+            *self.read_code.splitlines(),
             *prelude,
             "",
             *out["code"],

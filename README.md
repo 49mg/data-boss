@@ -163,7 +163,7 @@ npm start
 
 The app looks for the Python interpreter in `.venv/` first and falls back to `python3` (`python` on Windows). Set `DATA_BOSS_PYTHON=/path/to/python` to use a specific interpreter.
 
-1. Click **Open CSV** (or drop a file on the window) — max 200 MB.
+1. Click **Open file** (or drop a file on the window): CSV, TSV, Excel (.xlsx), Parquet, JSON or JSON Lines, max 200 MB. Separator and text encoding (including Arabic Windows-1256) are detected automatically; adjust them under **Import settings** on the Data screen.
 2. **Data** shows summary cards (rows, columns, missing cells, duplicates) and the rows themselves.
 3. **Column profile** shows each column's type, missing share, unique count and top values.
 4. **Inspect** has tabs for Info, Description, Missing values and Duplicated rows.
