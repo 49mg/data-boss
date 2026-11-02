@@ -1175,5 +1175,6 @@
  "−{0} rows": "−{0} rows",
  "Restart to update": "Restart to update",
  "Restart to update to {0}": "Restart to update to {0}",
- "Version {0} is ready. Restart Data Boss to use it.": "Version {0} is ready. Restart Data Boss to use it."
+ "Version {0} is ready. Restart Data Boss to use it.": "Version {0} is ready. Restart Data Boss to use it.",
+ "— Has {0} distinct values for {1} rows (almost one row per value, like an ID or contact detail); groups are too small to compare.": "— Has {0} distinct values for {1} rows (almost one row per value, like an ID or contact detail); groups are too small to compare."
 }

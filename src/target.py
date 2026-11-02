@@ -146,6 +146,10 @@ def _analyse(df, target, tkind, col, focus):
         if levels > MAX_LEVELS:
             why = "a different value in every row (like an ID)" if levels == n else f"{levels} distinct values"
             return {**base, "skipped": f"Has {why}; too many groups to compare."}
+        if levels > n / 2:
+            # With about one row per group, each group's average *is* that row, so η is ~1 by construction.
+            return {**base, "skipped": f"Has {levels} distinct values for {n} rows (almost one row per value, like an ID "
+                                       "or contact detail); groups are too small to compare."}
         pair["x"] = pair["x"].astype(str)
     x, y = pair["x"], pair["y"]
 
