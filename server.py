@@ -28,6 +28,7 @@ from cycler import cycler
 from matplotlib.colors import LinearSegmentedColormap
 
 from src import DataCleaner, DataInspector, DataVisualizer
+from src import notebook as nb
 from src.analysis import pivot
 from src.files import FileFormatError, excel_sheets, read_table, write_table
 from src.inspectors import _label
@@ -387,6 +388,48 @@ class Session:
         lines += ["df = df.reset_index(drop=True)", f"df.to_csv({stem + '_cleaned.csv'!r}, index=False)", ""]
         return {"code": "\n".join(lines), "fileName": f"{stem}_cleaning.py"}
 
+    def cmd_notebook(self, charts=None):
+        """The session as a Jupyter notebook: load, each cleaning step, then the given charts."""
+        df = self.require_df()
+        name = os.path.basename(self.path) if self.path else "data.csv"
+        stem = os.path.splitext(name)[0]
+        cells = [
+            nb.markdown(f"# {name}: Data Boss session\n\n"
+                        "Exported from Data Boss. Run the cells from top to bottom next to the data file to repeat "
+                        "every cleaning step and chart. Each step has the message the app showed when it was applied."),
+            nb.code("import matplotlib.pyplot as plt\nimport numpy as np\nimport pandas as pd\nimport seaborn as sns"),
+            nb.markdown(f"## Load the data\n\nReads `{name}` exactly as Data Boss did."),
+            nb.code("\n".join([*self.read_code.splitlines(), "df.shape"])),
+        ]
+        if self.log:
+            cells.append(nb.markdown("## Cleaning steps"))
+            for entry in self.log:
+                before, after = entry.get("shape_before"), entry.get("shape_after")
+                shape = (f"\n\nRows × columns: {before[0]:,} × {before[1]} → {after[0]:,} × {after[1]}"
+                         if before and after else "")
+                cells.append(nb.markdown(f"### Step {entry['step']}\n\n{entry['msg']}{shape}"))
+                cells.append(nb.code((entry.get("code") or "# (no code recorded)") + "\ndf.shape"))
+        cells += [nb.markdown("## Result"), nb.code("df = df.reset_index(drop=True)\ndf.head(10)")]
+
+        charts = [c for c in (charts or []) if c and c.get("kind")]
+        if charts:
+            cells.append(nb.markdown("## Charts\n\nDrawn from the cleaned data above."))
+            for c in charts[:12]:
+                params = {k: v for k, v in (c.get("params") or {}).items() if v not in (None, "")}
+                try:
+                    out = DataVisualizer(df).render_chart(c["kind"], params)
+                except Exception as e:  # a chart that no longer fits the data is explained, not fatal
+                    cells.append(nb.markdown(f"### {c.get('title') or c['kind']}\n\nSkipped: {e}"))
+                    continue
+                body = [*out["code"], *([f"plt.title({params['title']!r})"] if params.get("title") else []),
+                        "plt.tight_layout()", "plt.show()"]
+                insights = "".join(f"\n- {t}" for t in out["insights"])
+                cells.append(nb.markdown(f"### {c.get('title') or c['kind']}{chr(10) if insights else ''}{insights}"))
+                cells.append(nb.code("\n".join(body)))
+        cells += [nb.markdown("## Save the cleaned data"),
+                  nb.code(f"df.to_csv({stem + '_cleaned.csv'!r}, index=False)")]
+        return {"notebook": nb.dumps(nb.notebook(cells)), "fileName": f"{stem}_session.ipynb"}
+
     def cmd_undo(self):
         self.require_df()
         if not self.history:
@@ -536,7 +579,9 @@ class Session:
 
 # Commands that can take a while run on a background worker so the app stays
 # responsive and they can be cancelled. Everything else is answered inline.
-HEAVY_COMMANDS = {"plot", "preview", "inspect", "query", "query_chart", "pivot", "pivot_chart", "stats_test", "trends", "segment"}
+HEAVY_COMMANDS = {
+    "plot", "preview", "inspect", "query", "query_chart", "pivot", "pivot_chart", "stats_test", "trends", "segment", "notebook",
+}
 
 
 class Dispatcher:

@@ -33,6 +33,39 @@ jobs:
             node --check "$f"
           done
 
+      - name: Exported notebook runs in Jupyter
+        run: |
+          mkdir -p "$RUNNER_TEMP/nb" && cd "$RUNNER_TEMP/nb"
+          cat > make_notebook.py <<'PY'
+          import os, sys
+          sys.path.insert(0, os.environ["GITHUB_WORKSPACE"])
+          import numpy as np, pandas as pd
+          import server
+          rng = np.random.default_rng(0)
+          n = 120
+          pd.DataFrame({
+              "plan": rng.choice(["basic", "pro", None], n),
+              "fee": np.where(rng.random(n) < 0.05, np.nan, rng.normal(30, 8, n).round(2)),
+              "age": rng.integers(18, 60, n),
+              "joined": pd.date_range("2024-01-01", periods=n).astype(str),
+          }).to_csv("members.csv", index=False)
+          s = server.Session()
+          s.cmd_load("members.csv")
+          s.cmd_clean("FILL_NA", {"columns": ["fee"], "strategy": "median"})
+          s.cmd_clean("TO_DATETIME", {"columns": ["joined"]})
+          s.cmd_clean("BIN", {"column": "age", "method": "quantile", "bins": "3"})
+          s.cmd_clean("ONE_HOT", {"columns": ["plan"]})
+          s.cmd_export("app.csv")
+          charts = [{"kind": "HIST", "params": {"column": "fee"}, "title": "fee"},
+                    {"kind": "LINE", "params": {"x": "joined", "y": "fee", "freq": "W"}, "title": "fee over time"}]
+          with open("members_session.ipynb", "w", encoding="utf-8") as f:
+              f.write(s.cmd_notebook(charts)["notebook"])
+          PY
+          uv run --project "$GITHUB_WORKSPACE" --frozen --with nbconvert --with ipykernel python make_notebook.py
+          uv run --project "$GITHUB_WORKSPACE" --frozen --with nbconvert --with ipykernel \
+            jupyter nbconvert --to notebook --execute members_session.ipynb --output executed.ipynb
+          cmp members_cleaned.csv app.csv
+
   build:
     name: Build ${{ matrix.name }}
     needs: lint

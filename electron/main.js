@@ -208,6 +208,7 @@ ipcMain.handle("copy-image", async (_e, dataUrl) => {
 const TEXT_FILTERS = {
   py: { title: "Save script", filter: { name: "Python script", extensions: ["py"] } },
   svg: { title: "Save chart", filter: { name: "SVG image", extensions: ["svg"] } },
+  ipynb: { title: "Save notebook", filter: { name: "Jupyter notebook", extensions: ["ipynb"] } },
 };
 
 ipcMain.handle("save-text", async (_e, text, suggestedName) => {

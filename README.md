@@ -65,6 +65,10 @@ A **column detail picker** below the table lets you select any column and view i
 
 Every chart, pivot table, trend, segment comparison and test result has a **Report** button. The Report screen collects them with your own headings and notes; reorder or remove items, then **Export HTML** (one self-contained file with images inlined, opens offline in any browser) or **Export PDF**. Charts in the report are always drawn in light colours so they print well, and the report is kept between sessions.
 
+### Jupyter notebook export
+
+**Notebook** (in the Clean history panel and on Visualize) saves the session as a `.ipynb`: loading the file, every cleaning step with the message the app showed, and your recent charts with their insights. Run it next to the data file and it produces exactly the same cleaned data. CI executes an exported notebook with `jupyter nbconvert --execute` on every push.
+
 ### Data cleaning
 
 
@@ -149,6 +153,7 @@ data-boss/
 │   ├── base.py             # Abstract base classes (BaseDataInspector, BaseDataCleaner, BaseDataVisualizer)
 │   ├── inspectors.py       # DataInspector — read-only data summaries
 │   ├── target.py           # Target analysis: rank columns by relationship to one column
+│   ├── notebook.py         # Writes Jupyter notebooks (.ipynb) without extra dependencies
 │   ├── segments.py         # Segment vs rest comparison on every column
 │   ├── trends.py           # Period-over-period trends with insight sentences
 │   ├── stats.py            # Statistical tests chosen automatically, explained in plain language

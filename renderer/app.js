@@ -3796,3 +3796,24 @@ function focusLastReportInput() {
   });
 }
 syncReportBadge();
+
+/* ---- notebook export --------------------------------------------------- */
+
+async function exportNotebook() {
+  if (!app.state) return;
+  const charts = (app.recent || []).slice().reverse().map((r) => ({
+    kind: r.kind,
+    params: chartParams(r.kind, r.values),
+    title: `${CHART_TYPES.find((t) => t.kind === r.kind).label}: ${r.sub}`,
+  }));
+  try {
+    const res = await call("notebook", { charts });
+    const saved = await window.api.saveText(res.notebook, res.fileName);
+    if (saved) toast("success", `Notebook saved to ${saved.path}`);
+  } catch (err) {
+    toast("error", cleanError(err));
+  }
+}
+
+$("btn-notebook").addEventListener("click", exportNotebook);
+$("btn-chart-notebook").addEventListener("click", exportNotebook);

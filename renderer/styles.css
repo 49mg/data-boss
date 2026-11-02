@@ -1193,6 +1193,8 @@ details.raw[open] summary { margin-bottom: 12px; }
 .seg-bar.rest span, .trend-key.rest-key { background: var(--muted); opacity: 0.6; }
 .seg-bar-value { font-size: 11px; color: var(--muted); text-align: right; white-space: nowrap; }
 
+.history-buttons { display: flex; gap: 6px; }
+
 /* report builder */
 #section-report { max-width: 960px; }
 .report-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px 18px; }

@@ -249,9 +249,14 @@
               <div class="card history-card">
                 <div class="history-head">
                   <h2 id="history-summary">History</h2>
+<div class="history-buttons">
                   <button id="btn-code" class="btn btn-sm" disabled title="Export the steps as a pandas script">
                     <svg class="icon"><use href="#i-code"/></svg>Code
                   </button>
+                  <button id="btn-notebook" class="btn btn-sm" title="Export the session as a Jupyter notebook">
+                    <svg class="icon"><use href="#i-file"/></svg>Notebook
+                  </button>
+                  </div>
                 </div>
                 <ol id="history-list" class="timeline"></ol>
               </div>
@@ -505,6 +510,9 @@
                         <svg class="icon"><use href="#i-download"/></svg>SVG
                       </button>
 <button id="btn-report-chart" class="btn btn-sm" title="Add to the report"><svg class="icon"><use href="#i-report"/></svg>Report</button>
+                      <button id="btn-chart-notebook" class="btn btn-sm" title="Jupyter notebook with the cleaning steps and your recent charts">
+                        <svg class="icon"><use href="#i-file"/></svg>Notebook
+                      </button>
                       <button id="btn-chart-code" class="btn btn-sm" title="Python code for this chart">
                         <svg class="icon"><use href="#i-code"/></svg>Code
                       </button>
