@@ -200,10 +200,12 @@ class DataVisualizer(BaseDataVisualizer):
         data = self._clean([x, y], notes)
         order: list = []
         medians = pd.Series(dtype=float)
+        ordered = bool(x) and isinstance(data[x].dtype, pd.CategoricalDtype) and data[x].cat.ordered
         if x:
             data, _ = self._top_categories(data, x, int(top_n or 12), notes, "groups")
-            medians = data.groupby(x)[y].median().sort_values(ascending=False)
-            order = list(medians.index)
+            medians = data.groupby(x, observed=True)[y].median().sort_values(ascending=False)
+            # Ranges (e.g. from Bin into ranges) keep their natural order; other groups go by median.
+            order = [c for c in data[x].cat.categories if c in medians.index] if ordered else list(medians.index)
         fig, ax = self._fig()
         sns.boxplot(data=data, x=x, y=y, order=order or None, ax=ax, fliersize=2.5, linewidth=1,
                     color=None if x else plt.rcParams["axes.prop_cycle"].by_key()["color"][0])
@@ -226,7 +228,7 @@ class DataVisualizer(BaseDataVisualizer):
         iqr = q3 - q1
         outliers = int(((s < q1 - 1.5 * iqr) | (s > q3 + 1.5 * iqr)).sum())
         if x and order:
-            insights.append(f"Highest median: {order[0]} ({_f(medians.iloc[0])}). Lowest: {order[-1]} ({_f(medians.iloc[-1])}).")
+            insights.append(f"Highest median: {medians.idxmax()} ({_f(medians.max())}). Lowest: {medians.idxmin()} ({_f(medians.min())}).")
             sizes = data[x].value_counts()
             small = [str(g) for g in order if sizes[g] < 5]
             if small:
@@ -235,7 +237,10 @@ class DataVisualizer(BaseDataVisualizer):
         insights.append(f"{outliers:,} point(s) fall outside the whiskers (1.5 × IQR)." if outliers else "No points outside the whiskers.")
 
         code = [self._code_fig()]
-        if x:
+        if x and ordered:
+            code.append(f"order = [c for c in df[{x!r}].cat.categories if c in set(df[{x!r}].dropna())][:{int(top_n or 12)}]")
+            code.append(f"sns.boxplot(data=df[df[{x!r}].isin(order)], x={x!r}, y={y!r}, order=order, ax=ax)")
+        elif x:
             code.append(f"order = df.groupby({x!r})[{y!r}].median().sort_values(ascending=False).index[:{int(top_n or 12)}]")
             code.append(f"sns.boxplot(data=df[df[{x!r}].isin(order)], x={x!r}, y={y!r}, order=order, ax=ax)")
         else:
