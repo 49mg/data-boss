@@ -465,9 +465,13 @@
           <section id="section-model" class="section section-wide" hidden>
             <div class="page-head">
               <h1>Model</h1>
-              <p>Predict one column from the others and see honestly how well it works on rows the model never saw.</p>
+              <p>Predict one column from the others, or let the data form its own groups. Every result says honestly how well it works.</p>
             </div>
-            <div class="viz-layout">
+            <div class="segmented" id="model-tabs" role="tablist" aria-label="Model">
+              <button role="tab" aria-selected="true" data-tab="predict">Predict</button>
+              <button role="tab" aria-selected="false" data-tab="clusters">Clusters</button>
+            </div>
+            <div class="viz-layout" id="model-predict">
               <aside class="card viz-config">
                 <div class="viz-label">What to predict</div>
                 <div id="model-fields" class="fields fields-stack"></div>
@@ -487,6 +491,30 @@
                     </div>
                   </div>
                   <div id="model-output" class="test-output"></div>
+                </div>
+              </div>
+            </div>
+            <div class="viz-layout" id="model-clusters" hidden>
+              <aside class="card viz-config">
+                <div class="viz-label">Find groups of similar rows</div>
+                <div id="cluster-fields" class="fields fields-stack"></div>
+                <button id="btn-cluster" class="btn btn-primary btn-block"><svg class="icon"><use href="#i-play"/></svg>Find clusters</button>
+                <p class="test-help">k-means on the scaled columns. With “Automatic”, the number of clusters with the best silhouette score (2–8) is used.</p>
+              </aside>
+              <div class="viz-main">
+                <div class="card card-flush">
+                  <div class="viz-toolbar">
+                    <div class="viz-heading">
+                      <div class="viz-kind" id="cluster-title">Clusters</div>
+                      <div class="viz-sub" id="cluster-sub"></div>
+                    </div>
+                    <div class="viz-actions" id="cluster-actions" hidden>
+                      <button id="btn-cluster-apply" class="btn btn-sm" title="Add the cluster of every row as a new column (undoable)"><svg class="icon"><use href="#i-clean"/></svg>Add as column</button>
+                      <button id="btn-report-cluster" class="btn btn-sm" title="Add to the report"><svg class="icon"><use href="#i-report"/></svg>Report</button>
+                      <button id="btn-cluster-code" class="btn btn-sm"><svg class="icon"><use href="#i-code"/></svg>Code</button>
+                    </div>
+                  </div>
+                  <div id="cluster-output" class="test-output"></div>
                 </div>
               </div>
             </div>

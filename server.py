@@ -30,6 +30,7 @@ from matplotlib.colors import LinearSegmentedColormap
 from src import DataCleaner, DataInspector, DataVisualizer
 from src import notebook as nb
 from src.analysis import pivot
+from src.clusters import clusters
 from src.files import FileFormatError, excel_sheets, read_table, write_table
 from src.inspectors import _label
 from src.model import train_models
@@ -524,6 +525,12 @@ class Session:
         res["code"] = "\n".join(["import numpy as np", "import pandas as pd", "", *self._data_code(), "", res["code"], ""])
         return jsonable(res)
 
+    def cmd_clusters(self, features=None, k=None):
+        res = clusters(self.require_df(), features=features or None, k=k or None)
+        res["code"] = "\n".join(["import numpy as np", "import pandas as pd", "", *self._data_code(), "", res["code"],
+                                 "print(df['cluster'].value_counts())", ""])
+        return jsonable(res)
+
     # ---- segment comparison --------------------------------------------------
 
     def cmd_segment(self, conditions):
@@ -589,7 +596,7 @@ class Session:
 # responsive and they can be cancelled. Everything else is answered inline.
 HEAVY_COMMANDS = {
     "plot", "preview", "inspect", "query", "query_chart", "pivot", "pivot_chart", "stats_test", "trends", "segment", "notebook",
-    "model",
+    "model", "clusters",
 }
 
 

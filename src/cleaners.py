@@ -117,6 +117,7 @@ class DataCleaner(BaseDataCleaner):
             "BIN": self.bin_values,
             "LOG_TRANSFORM": self.log_transform,
             "GROUP_RARE": self.group_rare,
+            "ADD_CLUSTERS": self.add_clusters,
         }
         self.preview_override = None  # set by operations that need their own preview (joins)
 
@@ -725,6 +726,20 @@ class DataCleaner(BaseDataCleaner):
             raise ValueError("Nothing to group: every category is common enough with these settings.")
         self.code = "\n".join(lines)
         return f"Grouped rare categories: {'; '.join(merged)}."
+
+    def add_clusters(self, k, features=None, name="cluster"):
+        """Add a k-means cluster label (Cluster 1 = largest) as a new column."""
+        from .clusters import cluster_code, fit_clusters
+
+        name = str(name or "cluster").strip() or "cluster"
+        if name in self.df.columns:
+            raise ValueError(f"Column '{name}' already exists. Choose another name.")
+        labels, _, used, numeric, categorical = fit_clusters(self.df, features or None, k)
+        self.df[name] = [f"Cluster {c}" for c in labels]
+        self.code = cluster_code(numeric, categorical, int(k), name)
+        sizes = pd.Series(labels).value_counts().sort_index()
+        parts = ", ".join(f"{c}: {n:,}" for c, n in sizes.items())
+        return f"Added {name} with {int(k)} k-means clusters from {_plural(len(used), 'column')} (rows per cluster {parts})."
 
     # ---- SQL ---------------------------------------------------------------
 

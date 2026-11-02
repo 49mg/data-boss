@@ -480,7 +480,7 @@ function showSection(name) {
   if (app.state && name === "inspect" && app.inspectStale) renderInspect();
   if (app.state && name === "visualize" && app.chartKind && app.chartStale) scheduleRender(0);
   if (app.state && name === "report") renderReport();
-  if (app.state && name === "model") renderModelFields();
+  if (app.state && name === "model") selectModelTab(app.modelTab || "predict");
   if (app.state && name === "query" && app.query.infoStale) loadQueryInfo();
   if (app.state && name === "analyze") {
     if (app.analyzeTab === "tests") app.testStale !== false && renderTestFields(true);
@@ -525,6 +525,9 @@ function onLoaded(snapshot) {
   app.model = null;
   $("model-output").replaceChildren();
   $("model-actions").hidden = true;
+  app.clusters = null;
+  $("cluster-output").replaceChildren();
+  $("cluster-actions").hidden = true;
   $("segment-output").replaceChildren();
   $("trend-output").replaceChildren();
   $("test-output").replaceChildren();
@@ -3996,3 +3999,161 @@ function reportModel() {
 $("btn-train").addEventListener("click", trainModel);
 $("btn-model-code").addEventListener("click", showModelCode);
 $("btn-report-model").addEventListener("click", reportModel);
+
+/* ---- clustering ------------------------------------------------------- */
+
+let clusterValues = {};
+let clusterSeq = 0;
+
+function selectModelTab(tab) {
+  app.modelTab = tab;
+  for (const b of document.querySelectorAll("#model-tabs button")) b.setAttribute("aria-selected", String(b.dataset.tab === tab));
+  $("model-predict").hidden = tab !== "predict";
+  $("model-clusters").hidden = tab !== "clusters";
+  if (!app.state) return;
+  if (tab === "clusters") renderClusterFields();
+  else renderModelFields();
+}
+
+function renderClusterFields() {
+  const memory = (app.forms.clusters ||= {});
+  const cols = allCols();
+  const defaults = numericCols().length ? [...numericCols(), ...groupCols().filter((c) => uniqueOf(c) <= 12)] : cols;
+  clusterValues = buildForm($("cluster-fields"), [
+    { key: "features", label: "Columns that describe a row", type: "multi", options: cols, default: defaults,
+      hint: "IDs, free text and dates are left out automatically." },
+    { key: "k", label: "Number of clusters", type: "select",
+      options: toOptions([["", "Automatic (best silhouette)"], ...[2, 3, 4, 5, 6, 7, 8, 10].map((k) => [String(k), String(k)])]) },
+  ], memory, (values) => { clusterValues = values; });
+}
+
+async function findClusters() {
+  if (!app.state) return;
+  const features = clusterValues.features || [];
+  if (!features.length) {
+    $("cluster-output").replaceChildren(note("warn", "Tick at least one column."));
+    return;
+  }
+  const seq = ++clusterSeq;
+  const out = $("cluster-output");
+  const loading = el("div", { class: "inline-loading" }, el("span", { class: "impact-dot pulse" }), "Trying 2 to 8 clusters…");
+  out.replaceChildren(loading);
+  $("btn-cluster").disabled = true;
+  const hideCancel = delayedCancel(loading, "clusters", () => seq === clusterSeq && out.replaceChildren(note("info", "Cancelled.")));
+  try {
+    const res = await callLatest("clusters", "clusters", { features, k: clusterValues.k ? Number(clusterValues.k) : null });
+    if (seq !== clusterSeq) return;
+    app.clusters = res;
+    $("cluster-title").textContent = `${res.k} clusters`;
+    $("cluster-sub").textContent = `${fmt(res.rows)} rows · ${plural(res.features.length, "column")}`;
+    $("cluster-actions").hidden = false;
+    out.replaceChildren(clusterView(res));
+  } catch (err) {
+    if (seq !== clusterSeq || isCancelled(err)) return;
+    app.clusters = null;
+    $("cluster-actions").hidden = true;
+    out.replaceChildren(note("warn", cleanError(err)));
+  } finally {
+    hideCancel();
+    $("btn-cluster").disabled = false;
+  }
+}
+
+function svgNode(tag, attrs, text) {
+  const n = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (text != null) n.textContent = text;
+  return n;
+}
+
+function scanChart(scan, chosen) {
+  const W = 420, H = 220, L = 46, R = 46, T = 12, B = 34;
+  const ks = scan.map((s) => s.k);
+  const x = (k) => L + ((k - ks[0]) / Math.max(1, ks[ks.length - 1] - ks[0])) * (W - L - R);
+  const inMax = Math.max(...scan.map((s) => s.inertia)), inMin = Math.min(...scan.map((s) => s.inertia));
+  const yi = (v) => T + (1 - (v - inMin) / (inMax - inMin || 1)) * (H - T - B);
+  const silMax = Math.max(...scan.map((s) => s.silhouette)), silMin = Math.min(...scan.map((s) => s.silhouette));
+  const ys = (v) => T + (1 - (v - silMin) / (silMax - silMin || 1)) * (H - T - B);
+  const svg = svgNode("svg", { viewBox: `0 0 ${W} ${H}`, class: "trend-svg", role: "img", "aria-label": "Elbow and silhouette by number of clusters" });
+  svg.append(svgNode("rect", { x: x(chosen) - 10, y: T, width: 20, height: H - T - B, class: "scan-chosen" }));
+  for (const k of ks) svg.append(svgNode("text", { x: x(k), y: H - 14, class: "trend-axis", "text-anchor": "middle" }, String(k)));
+  svg.append(svgNode("text", { x: (L + W - R) / 2, y: H - 1, class: "trend-axis", "text-anchor": "middle" }, "number of clusters"));
+  svg.append(svgNode("polyline", { points: scan.map((s) => `${x(s.k)},${yi(s.inertia)}`).join(" "), class: "trend-line scan-inertia" }));
+  svg.append(svgNode("polyline", { points: scan.map((s) => `${x(s.k)},${ys(s.silhouette)}`).join(" "), class: "trend-avg" }));
+  for (const s of scan) {
+    const d1 = svgNode("circle", { cx: x(s.k), cy: yi(s.inertia), r: 3, class: "trend-dot" });
+    d1.append(svgNode("title", {}, `k=${s.k}: inertia ${fnum(s.inertia)}`));
+    const d2 = svgNode("circle", { cx: x(s.k), cy: ys(s.silhouette), r: 3, class: "scan-sil-dot" });
+    d2.append(svgNode("title", {}, `k=${s.k}: silhouette ${s.silhouette.toFixed(3)}`));
+    svg.append(d1, d2);
+  }
+  svg.append(svgNode("text", { x: L - 6, y: T + 8, class: "trend-axis", "text-anchor": "end" }, "high"),
+    svgNode("text", { x: W - R + 6, y: ys(silMax) + 4, class: "trend-axis" }, silMax.toFixed(2)),
+    svgNode("text", { x: W - R + 6, y: ys(silMin) + 4, class: "trend-axis" }, silMin.toFixed(2)));
+  return svg;
+}
+
+function clusterMap(points, k) {
+  const W = 420, H = 300, P = 14;
+  const xs = points.map((p) => p[0]), ys = points.map((p) => p[1]);
+  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  const sx = (v) => P + ((v - x0) / (x1 - x0 || 1)) * (W - 2 * P);
+  const sy = (v) => P + (1 - (v - y0) / (y1 - y0 || 1)) * (H - 2 * P);
+  const svg = svgNode("svg", { viewBox: `0 0 ${W} ${H}`, class: "trend-svg cluster-map", role: "img", "aria-label": "Rows on a 2-D map coloured by cluster" });
+  svg.append(svgNode("rect", { x: 0.5, y: 0.5, width: W - 1, height: H - 1, class: "cluster-frame" }));
+  for (const [a, b, c] of points) svg.append(svgNode("circle", { cx: sx(a), cy: sy(b), r: 3.2, class: `cl cl-${((c - 1) % 8) + 1}` }));
+  return svg;
+}
+
+function clusterView(res) {
+  const good = (res.silhouette ?? 0) >= 0.25;
+  const verdict = el("div", { class: `test-verdict ${good ? "found" : "none"}` },
+    el("div", { class: "test-verdict-label", text: good ? "Groups found" : "Groups are not clear-cut" }),
+    el("p", { class: "test-sentence", text: res.summary }));
+  const profiles = el("div", { class: "cluster-profiles" }, res.profiles.map((p) =>
+    el("div", { class: "cluster-card" },
+      el("div", { class: "cluster-card-head" },
+        el("span", { class: `cl-swatch cl-${((p.cluster - 1) % 8) + 1}` }),
+        el("strong", { text: `Cluster ${p.cluster}` }),
+        el("span", { class: "muted", text: `${fmt(p.size)} rows · ${fmtPct(p.share * 100)}` })),
+      el("p", { class: "cluster-name", text: p.name.replace(/^Cluster \d+: /, "") }),
+      p.traits.length ? el("ul", {}, p.traits.map((t) => el("li", { text: t }))) : null)));
+  const charts = el("div", { class: "grid-2 model-grid" },
+    el("div", { class: "card" }, el("h2", { text: "Rows on a map" }),
+      el("p", { class: "card-hint", text: `The columns squeezed into 2 dimensions (PCA, ${fmtPct((res.explained[0] + res.explained[1]) * 100)} of the variation). Nearby dots are similar rows.` }),
+      clusterMap(res.points, res.k)),
+    el("div", { class: "card" }, el("h2", { text: "How many clusters?" }),
+      el("p", { class: "card-hint", text: "Solid: spread inside clusters (lower is tighter; look for the bend). Dashed: silhouette (higher = better separated). The shaded column is the number used." }),
+      scanChart(res.scan, res.k)));
+  const skipped = res.skipped.length
+    ? el("details", { class: "card tgt-skipped" }, el("summary", { text: `Columns left out (${res.skipped.length})` }),
+      el("ul", {}, res.skipped.map((k) => el("li", {}, el("strong", { text: k.column }), ` — ${k.reason}`))))
+    : null;
+  return el("div", { class: "test-body" }, verdict, profiles, charts, skipped);
+}
+
+async function applyClusters() {
+  if (!app.clusters) return;
+  const name = allCols().includes("cluster") ? `cluster_${app.clusters.k}` : "cluster";
+  try {
+    const res = await call("clean", { method: "ADD_CLUSTERS", params: { k: app.clusters.k, features: app.clusters.features, name } });
+    setState(res.state);
+    toast("success", `${res.message} Undo it from Clean if needed.`);
+  } catch (err) {
+    toast("error", cleanError(err));
+  }
+}
+
+function reportClusters() {
+  if (!app.clusters) return;
+  const r = app.clusters;
+  addToReport({ type: "insights", title: `Clusters: ${r.k} groups from ${r.features.join(", ")}`, lead: r.summary,
+    items: r.profiles.map((p) => `${p.name} (${fmt(p.size)} rows, ${fmtPct(p.share * 100)})`) });
+}
+
+for (const b of document.querySelectorAll("#model-tabs button")) b.addEventListener("click", () => selectModelTab(b.dataset.tab));
+$("btn-cluster").addEventListener("click", findClusters);
+$("btn-cluster-apply").addEventListener("click", applyClusters);
+$("btn-report-cluster").addEventListener("click", reportClusters);
+$("btn-cluster-code").addEventListener("click", () => app.clusters &&
+  openCodeDialog("Clusters as scikit-learn code", "Rebuilds your data and the same cluster numbers (fixed seed).", app.clusters.code, "clusters.py"));

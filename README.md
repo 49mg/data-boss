@@ -65,6 +65,8 @@ A **column detail picker** below the table lets you select any column and view i
 
 Pick a column to predict and the columns to learn from; the task (regression or classification) is detected automatically. Data Boss trains a baseline, a linear/logistic model and a random forest on 80% of the rows and scores them on the other 20%. Imputing, scaling and one-hot encoding happen inside a scikit-learn pipeline fitted on the training rows only, so nothing leaks from the test rows. Results include R², MAE and RMSE or accuracy, F1 and ROC-AUC, a predicted-vs-actual chart or confusion matrix, permutation feature importance, and warnings for tiny data, class imbalance, suspiciously perfect scores (leakage) and overfitting. When no model beats guessing it says so. **Code** exports the full scikit-learn script.
 
+The **Clusters** tab groups similar rows with k-means: it tries 2–8 clusters, picks the count with the best silhouette score (or uses yours), describes each cluster in plain words (e.g. “Cluster 3: mostly plan = pro, very high fee, high visits”), shows the rows on a 2-D map, and **Add as column** stores each row's cluster as an undoable cleaning step. Results are reproducible (fixed seed, Cluster 1 is always the largest).
+
 ### Report
 
 Every chart, pivot table, trend, segment comparison and test result has a **Report** button. The Report screen collects them with your own headings and notes; reorder or remove items, then **Export HTML** (one self-contained file with images inlined, opens offline in any browser) or **Export PDF**. Charts in the report are always drawn in light colours so they print well, and the report is kept between sessions.
@@ -157,6 +159,7 @@ data-boss/
 │   ├── base.py             # Abstract base classes (BaseDataInspector, BaseDataCleaner, BaseDataVisualizer)
 │   ├── inspectors.py       # DataInspector — read-only data summaries
 │   ├── target.py           # Target analysis: rank columns by relationship to one column
+│   ├── clusters.py         # k-means clustering with plain-language cluster profiles
 │   ├── model.py            # Model builder: baseline, linear and random forest with honest evaluation
 │   ├── notebook.py         # Writes Jupyter notebooks (.ipynb) without extra dependencies
 │   ├── segments.py         # Segment vs rest comparison on every column
