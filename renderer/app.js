@@ -41,6 +41,9 @@ const CLEAN_OPS = [
     { key: "CLIP_ZSCORE", label: "Clip outliers (z-score)", desc: "Caps values more than 3 standard deviations from the mean. Rows are kept." },
     { key: "ROUND", label: "Round numbers", desc: "Rounds numeric columns to a fixed number of decimal places." },
   ] },
+  { group: "Combine", icon: "i-table", items: [
+    { key: "JOIN", label: "Join another file", desc: "Adds columns from another file by matching a key, like VLOOKUP in Excel: for example gym_id in both files. The preview shows how many rows match before anything changes." },
+  ] },
   { group: "New columns", icon: "i-pivot", items: [
     { key: "ADD_COLUMN", label: "Calculated column", desc: "Computes a new column for every row with an expression, e.g. price / visits, ROUND(price * 1.1, 2), upper(city), or CASE WHEN totalScore >= 4.5 THEN 'top' ELSE 'other' END. Using an existing name replaces that column." },
     { key: "DATE_PARTS", label: "Date parts", desc: "Adds columns such as year, month, weekday or hour from a date column, ready for grouping and charts." },
@@ -1255,6 +1258,25 @@ function cleanSpecs(method, memory) {
         { key: "dayfirst", label: "Ambiguous dates like 03/04", type: "select",
           options: toOptions([["false", "Month first (March 4)"], ["true", "Day first (3 April)"]]) },
       ];
+    case "JOIN": {
+      const others = app.state.secondary || [];
+      if (!others.length) return [];
+      const name = others.some((o) => o.name === memory.dataset) ? memory.dataset : others[0].name;
+      const other = others.find((o) => o.name === name);
+      const otherCols = other.columns.map((c) => c.name);
+      const left = cols.includes(memory.left_on) ? memory.left_on : cols.find((c) => otherCols.includes(c)) || cols[0];
+      return [
+        { key: "dataset", label: "Other file", type: "select", rerender: true,
+          options: others.map((o) => ({ value: o.name, label: `${o.name} · ${fmt(o.shape[0])} rows` })), default: name },
+        { key: "left_on", label: "Key in this data", type: "select", options: cols, default: left, rerender: true },
+        { key: "right_on", label: `Key in ${name}`, type: "select", options: otherCols,
+          default: otherCols.includes(left) ? left : otherCols[0] },
+        { key: "how", label: "Which rows to keep", type: "select",
+          options: toOptions([["left", "All rows of this data (left join)"], ["inner", "Only rows that match (inner join)"],
+            ["outer", "All rows of both (outer join)"], ["right", "All rows of the other file (right join)"]]) },
+        { key: "suffix", label: "Suffix for clashing column names", type: "text", default: "_right" },
+      ];
+    }
     case "ADD_COLUMN":
       return [
         { key: "name", label: "New column name", type: "text" },
@@ -1320,6 +1342,10 @@ function cleanInvalid(method, v) {
     if (name === v.old_name) return "The new name is the same as the old one.";
   }
   if (method === "REPLACE_VALUES" && !v.find) return "Enter the value to find.";
+  if (method === "JOIN") {
+    if (!(app.state.secondary || []).length) return "Add the other file to join with.";
+    if (!v.left_on || !v.right_on) return "Choose a key column on each side.";
+  }
   if (method === "ADD_COLUMN") {
     if (!(v.name || "").trim()) return "Enter a name for the new column.";
     if (!(v.expression || "").trim()) return "Write an expression, e.g. price / visits.";
@@ -1380,8 +1406,18 @@ function renderCleanFields() {
   };
   cleanValues = buildForm($("clean-fields"), specs, memory, update);
   if (!specs.length) {
-    const msg = method === "DATE_PARTS" ? "No date columns yet. Use Convert to date on a text column first." : "No settings needed.";
+    const msg = {
+      DATE_PARTS: "No date columns yet. Use Convert to date on a text column first.",
+      JOIN: "First choose the other file. Its rows are matched to this data by a key column.",
+    }[method] || "No settings needed.";
     $("clean-fields").replaceChildren(el("p", { class: "muted no-inputs", text: msg }));
+  }
+  if (method === "JOIN") {
+    const hasOthers = (app.state.secondary || []).length > 0;
+    $("clean-fields").append(el("div", { class: "join-add" },
+      el("button", { class: "btn btn-sm", type: "button", onclick: addJoinFile }, icon("i-folder"),
+        hasOthers ? "Add another file…" : "Choose the file to join…"),
+      hasOthers ? null : el("span", { class: "field-hint", text: "CSV, Excel, Parquet or JSON. It is only read, never changed." })));
   }
   if (method === "ADD_COLUMN") {
     const input = $("clean-fields").querySelector('input[data-key="expression"]');
@@ -1502,7 +1538,22 @@ function renderImpact({ state, res, text, noChange }) {
   if (res.changes.rows.length) {
     parts.push(el("div", { class: "impact-sub", text: `Changed cells (first ${res.changes.rows.length} rows)` }), changeTable(res.changes));
   }
-  if (res.addedSample) {
+  if (res.join) {
+    const j = res.join;
+    const pctMatched = j.leftRows ? Math.round((j.matchedLeft / j.leftRows) * 100) : 0;
+    parts.splice(1, 1, el("div", { class: "join-stats" },
+      el("div", { class: "join-stat" }, el("strong", { text: `${fmt(j.matchedLeft)} / ${fmt(j.leftRows)}` }), el("span", { text: `rows here matched (${pctMatched}%)` })),
+      el("div", { class: "join-stat" }, el("strong", { text: fmt(j.unmatchedLeft) }), el("span", { text: "rows here without a match" })),
+      el("div", { class: "join-stat" }, el("strong", { text: fmt(j.unmatchedRight) }), el("span", { text: `rows in ${j.otherName} without a match` })),
+      el("div", { class: "join-stat" }, el("strong", { text: `${fmt(j.leftRows)} → ${fmt(j.resultRows)}` }), el("span", { text: "rows before → after" }))));
+    if (j.duplicateRightKeys) {
+      parts.push(note("warn", `${fmt(j.duplicateRightKeys)} rows in ${j.otherName} share a key with another row, so matching rows here will be repeated. Remove duplicates in that file first if each key should appear once.`));
+    }
+    if (!j.matchedLeft) parts.push(note("warn", "No rows match. Check that the key columns hold the same values (for example, same spelling and no extra spaces)."));
+    const wrap = el("div", { class: "table-wrap impact-table" });
+    renderTable(wrap, res.resultSample, { indexLabel: "Row" });
+    parts.push(el("div", { class: "impact-sub", text: "Result (first rows)" }), wrap);
+  } else if (res.addedSample) {
     const wrap = el("div", { class: "table-wrap impact-table" });
     renderTable(wrap, res.addedSample, { indexLabel: "Row" });
     parts.push(el("div", { class: "impact-sub", text: "New column values (first rows)" }), wrap);
@@ -1521,6 +1572,25 @@ function renderImpact({ state, res, text, noChange }) {
     parts.push(el("details", { class: "impact-code" }, el("summary", { text: "pandas code for this step" }), el("pre", { class: "code-block", text: res.code })));
   }
   box.replaceChildren(...parts);
+}
+
+async function addJoinFile() {
+  try {
+    const path = await window.api.chooseFile();
+    if (!path) return;
+    let res = await withBusy(window.api.call("load_secondary", { path }));
+    if (res.needsSheet) {
+      const sheet = await pickSheet(res.sheets, path.split(/[\\/]/).pop());
+      if (!sheet) return;
+      res = await withBusy(window.api.call("load_secondary", { path, sheet }));
+    }
+    app.state = res.state;
+    app.forms.clean.JOIN = { ...(app.forms.clean.JOIN || {}), dataset: res.name };
+    renderCleanFields();
+    toast("success", `Added ${res.name} (${fmt(res.shape[0])} rows) for joining.`);
+  } catch (err) {
+    toast("error", cleanError(err));
+  }
 }
 
 async function doClean() {

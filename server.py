@@ -130,6 +130,7 @@ class Session:
         self.df = None
         self.read_code = ""
         self.source = {}
+        self.secondary = {}  # name -> {"df", "path", "read_code"} for joins
         self.history = []
         self.log = []
 
@@ -162,6 +163,11 @@ class Session:
             "path": self.path,
             "fileName": os.path.basename(self.path) if self.path else None,
             "source": self.source,
+            "secondary": [
+                {"name": k, "shape": list(v["df"].shape),
+                 "columns": [{"name": str(c), "dtype": str(v["df"][c].dtype)} for c in v["df"].columns]}
+                for k, v in self.secondary.items()
+            ],
             "shape": list(df.shape),
             "missingCells": int(df.isna().sum().sum()),
             "duplicateRows": int(df.duplicated().sum()),
@@ -198,9 +204,35 @@ class Session:
         self.df = df
         self.read_code = read_code
         self.source = {**info, "notes": notes, "sheets": excel_sheets(path) if info["format"] == "excel" else None}
+        self.secondary = {}
         self.history = []
         self.log = []
         return self.snapshot()
+
+    def cmd_load_secondary(self, path, sheet=None, options=None):
+        """Open another file to join with. Same formats and sheet handling as load."""
+        self.require_df()
+        if sheet is None and path.lower().endswith((".xlsx", ".xlsm")):
+            sheets = excel_sheets(path)
+            if len(sheets) > 1:
+                return {"needsSheet": True, "sheets": sheets, "path": path}
+        df, read_code, notes, info = read_table(path, sheet=sheet, options=options)
+        stem = os.path.splitext(os.path.basename(path))[0] or "other"
+        name, n = stem, 2
+        while name in self.secondary and self.secondary[name]["path"] != path:
+            name, n = f"{stem}_{n}", n + 1
+        self.secondary[name] = {"df": df, "path": path, "read_code": read_code}
+        return {"name": name, "shape": list(df.shape), "notes": notes, "state": self.snapshot()}
+
+    def _resolve_join(self, method, params):
+        if method != "JOIN":
+            return params
+        params = dict(params)
+        name = params.pop("dataset", None)
+        other = self.secondary.get(name)
+        if other is None:
+            raise ValueError("Choose the other file to join with.")
+        return {**params, "right": other["df"], "right_name": name, "right_code": other["read_code"]}
 
     def cmd_reload(self, sheet=None, options=None):
         """Re-read the current file with different import settings (clears history)."""
@@ -236,7 +268,7 @@ class Session:
             raise ValueError(f"Unknown cleaning method: {method}")
 
         shape_before = df.shape
-        msg = cleaner.apply_clean(method, **params)  # raises -> state unchanged
+        msg = cleaner.apply_clean(method, **self._resolve_join(method, params))  # raises -> state unchanged
         self.history.append(df)
         self.df = cleaner.df.reset_index(drop=True)
         self.log.append({
@@ -255,8 +287,19 @@ class Session:
         cleaner = DataCleaner(before)
         if method not in cleaner.clean_methods:
             raise ValueError(f"Unknown cleaning method: {method}")
-        msg = cleaner.apply_clean(method, **(params or {}))
+        msg = cleaner.apply_clean(method, **self._resolve_join(method, params or {}))
         after = cleaner.df
+        if cleaner.preview_override:  # joins: describe matches instead of a cell diff
+            extra = cleaner.preview_override
+            result = extra["result"]
+            return {
+                "message": msg, "rows": [len(before), len(result)], "cols": [before.shape[1], result.shape[1]],
+                "removedRows": max(0, len(before) - len(result)), "removedColumns": [],
+                "addedColumns": [str(c) for c in result.columns if c not in before.columns],
+                "changedCells": 0, "changedByColumn": {}, "dtypeChanges": [], "changes": {"columns": [], "rows": []},
+                "removedSample": None, "orderSample": None, "addedSample": None,
+                "join": extra["join"], "resultSample": table(result.head(sample)), "code": cleaner.code,
+            }
 
         removed_rows = before.index.difference(after.index)
         removed_cols = [str(c) for c in before.columns if c not in after.columns]

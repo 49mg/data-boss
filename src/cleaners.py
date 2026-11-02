@@ -68,7 +68,9 @@ class DataCleaner(BaseDataCleaner):
             "PIVOT": self.pivot_table,
             "ADD_COLUMN": self.add_column,
             "DATE_PARTS": self.date_parts,
+            "JOIN": self.join,
         }
+        self.preview_override = None  # set by operations that need their own preview (joins)
 
     # ---- helpers ---------------------------------------------------------
 
@@ -447,6 +449,66 @@ class DataCleaner(BaseDataCleaner):
             added.append(new)
         self.code = "\n".join(lines)
         return f"Added {_plural(len(added), 'column')} from {column}: {', '.join(added)}."
+
+    JOIN_HOWS = {"left": "kept all rows of this data", "inner": "kept only matching rows",
+                 "outer": "kept all rows of both", "right": "kept all rows of the other file"}
+
+    def join(self, right, right_name, right_code, left_on, right_on, how="left", suffix="_right"):
+        """Join another dataset on key columns (pandas merge)."""
+        left_on = [left_on] if isinstance(left_on, str) else list(left_on or [])
+        right_on = [right_on] if isinstance(right_on, str) else list(right_on or [])
+        if not left_on or len(left_on) != len(right_on):
+            raise ValueError("Choose a key column on each side.")
+        if how not in self.JOIN_HOWS:
+            raise ValueError("Join type must be left, inner, outer or right.")
+        for c in left_on:
+            if c not in self.df.columns:
+                raise ValueError(f"Unknown column in this data: {c}.")
+        for c in right_on:
+            if c not in right.columns:
+                raise ValueError(f"Unknown column in {right_name}: {c}.")
+        suffix = str(suffix or "_right")
+        for lk, rk in zip(left_on, right_on, strict=True):
+            lnum, rnum = pd.api.types.is_numeric_dtype(self.df[lk]), pd.api.types.is_numeric_dtype(right[rk])
+            if lnum != rnum:
+                raise ValueError(f"“{lk}” and “{rk}” hold different kinds of values (numbers vs text). "
+                                 "Convert one of them first so the keys can match.")
+
+        left_keys = self.df[left_on].apply(tuple, axis=1)
+        right_keys = right[right_on].apply(tuple, axis=1)
+        right_set, left_set = set(right_keys), set(left_keys)
+        dup_right = int(right_keys.duplicated(keep=False).sum())
+        before = len(self.df)
+        try:
+            result = self.df.merge(right, left_on=left_on, right_on=right_on, how=how, suffixes=("", suffix))
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"Could not join: {e}") from e
+        stats = {
+            "otherName": right_name,
+            "leftRows": before,
+            "rightRows": len(right),
+            "matchedLeft": int(left_keys.isin(right_set).sum()),
+            "unmatchedLeft": int((~left_keys.isin(right_set)).sum()),
+            "unmatchedRight": int((~right_keys.isin(left_set)).sum()),
+            "duplicateRightKeys": dup_right,
+            "resultRows": len(result),
+            "how": how,
+        }
+        self.preview_override = {"join": stats, "result": result}
+        self.df = result
+
+        body = "\n".join("    " + line for line in right_code.splitlines())
+        self.code = (
+            "def read_other():\n"
+            f"{body}\n"
+            "    return df\n"
+            "right = read_other()\n"
+            f"df = df.merge(right, left_on={left_on!r}, right_on={right_on!r}, how={how!r}, suffixes=('', {suffix!r}))"
+        )
+        grew = f" Rows went from {before:,} to {len(result):,} because some keys repeat in {right_name}." \
+            if len(result) > before and dup_right else ""
+        return (f"Joined {right_name} on {', '.join(left_on)} ({self.JOIN_HOWS[how]}): "
+                f"{stats['matchedLeft']:,} of {before:,} rows matched.{grew}")
 
     def drop_columns(self, columns):
         if len(columns) == 0:

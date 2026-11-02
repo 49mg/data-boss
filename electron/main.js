@@ -157,6 +157,15 @@ ipcMain.handle("open-file", async () => {
   return callBackend("load", { path: filePaths[0] });
 });
 
+ipcMain.handle("choose-file", async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+    title: "Choose a file to join",
+    properties: ["openFile"],
+    filters: OPEN_FILTERS,
+  });
+  return canceled || !filePaths.length ? null : filePaths[0];
+});
+
 ipcMain.handle("export-data", async (_e, suggestedName, format = "csv") => {
   const kind = EXPORT_FORMATS[format] || EXPORT_FORMATS.csv;
   const { canceled, filePath } = await dialog.showSaveDialog(win, {

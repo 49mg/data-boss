@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld("api", {
   call: (cmd, args, tag) => ipcRenderer.invoke("backend", cmd, args, tag),
   cancel: (tag) => ipcRenderer.invoke("cancel", tag),
   openFile: () => ipcRenderer.invoke("open-file"),
+  chooseFile: () => ipcRenderer.invoke("choose-file"),
   loadPath: (path, sheet) => ipcRenderer.invoke("backend", "load", sheet ? { path, sheet } : { path }),
   exportData: (suggestedName, format) => ipcRenderer.invoke("export-data", suggestedName, format),
   saveImage: (dataUrl, suggestedName) => ipcRenderer.invoke("save-image", dataUrl, suggestedName),
