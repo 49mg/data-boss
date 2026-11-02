@@ -1088,10 +1088,43 @@ details.raw[open] summary { margin-bottom: 12px; }
 .corr-strength { font-size: 12.5px; color: var(--muted); }
 .corr-n { font: 12px var(--mono); text-align: right; }
 
+/* target analysis */
+.field-inline { display: inline-flex; align-items: center; gap: 10px; font-weight: 500; }
+.field-inline select { min-width: 220px; }
+.bar.muted-bar > span { background: var(--muted); opacity: 0.55; }
+.tgt-list { display: flex; flex-direction: column; }
+.tgt-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(220px, 1fr);
+  gap: 24px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+.tgt-row:last-child { border-bottom: 0; }
+.tgt-main { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.tgt-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.tgt-rank { font: 12px var(--mono); width: 20px; }
+.tgt-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tgt-strength { margin-left: auto; font-size: 12.5px; color: var(--muted); }
+.tgt-score { display: flex; align-items: center; gap: 12px; }
+.tgt-score .mono { font-size: 12.5px; white-space: nowrap; }
+.tgt-sentence { margin: 0; font-size: 13.5px; line-height: 1.5; }
+.tgt-meta { font: 12px var(--mono); }
+.tgt-chart { display: flex; flex-direction: column; gap: 4px; align-self: center; }
+.tgt-chart-title { font-size: 12px; margin-bottom: 2px; }
+.tgt-chart-row { display: grid; grid-template-columns: minmax(60px, 120px) 1fr 56px; align-items: center; gap: 8px; }
+.tgt-chart-label { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tgt-chart-track { height: 7px; border-radius: 4px; background: var(--surface2); overflow: hidden; }
+.tgt-chart-track span { display: block; height: 100%; background: var(--primary); opacity: 0.8; border-radius: 4px; }
+.tgt-chart-value { font: 11.5px var(--mono); color: var(--muted); text-align: right; }
+.tgt-skipped summary { cursor: pointer; font-weight: 600; color: var(--muted); }
+.tgt-skipped ul { margin: 12px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.7; }
+
 @media (max-width: 1100px) {
   .issue { grid-template-columns: 1fr; gap: 8px; }
   .corr-row { grid-template-columns: 1fr 1fr 56px; }
   .corr-strength, .corr-n { display: none; }
+  .tgt-row { grid-template-columns: 1fr; gap: 12px; }
 }
 
 /* ================================================================== */

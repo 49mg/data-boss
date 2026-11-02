@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 
 from .base import BaseDataInspector
+from .target import target_analysis
 
 SEVERITY_ORDER = {"critical": 0, "warning": 1, "info": 2}
 
@@ -51,6 +52,7 @@ class DataInspector(BaseDataInspector):
             "DUPES": self.duplicates,
             "OUTLIERS": self.outliers,
             "CORR": self.correlations,
+            "TARGET": self.target,
         }
 
     # ---- column helpers ------------------------------------------------
@@ -421,6 +423,11 @@ class DataInspector(BaseDataInspector):
                 pairs.append({"a": str(a), "b": str(b), "r": r, "n": int(overlap.loc[a, b])})
         pairs.sort(key=lambda p: -abs(p["r"]))
         return {"method": method, "pairs": pairs[:limit], "columns": len(cols), "total": len(pairs)}
+
+    def target(self, column=None):
+        if not column:
+            return {"summary": None, "columns": [], "skipped": []}
+        return target_analysis(self.df, column)
 
     def render(self, method_key, **params):
         if method_key and method_key in self.methods:

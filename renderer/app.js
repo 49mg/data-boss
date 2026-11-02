@@ -1111,6 +1111,94 @@ function viewCorr(res) {
   );
 }
 
+/* ---- Target ------------------------------------------------------------ */
+function targetChart(item) {
+  if (!item.chart || !item.chart.length) return null;
+  const values = item.chart.map((c) => c.value ?? 0);
+  const lo = Math.min(0, ...values);
+  const span = Math.max(...values) - lo || 1;
+  const percent = item.chartMetric.startsWith("%");
+  return el(
+    "div",
+    { class: "tgt-chart" },
+    el("div", { class: "tgt-chart-title muted", text: `${item.chartMetric} by ${item.chartBy}` }),
+    item.chart.map((c) =>
+      el("div", { class: "tgt-chart-row", title: `${c.label}: ${fnum(c.value)}${percent ? "%" : ""} (n=${fmt(c.n)})` },
+        el("span", { class: "tgt-chart-label", text: c.label }),
+        el("div", { class: "tgt-chart-track" },
+          el("span", { style: `width:${Math.max(1, (((c.value ?? 0) - lo) / span) * 100)}%` })),
+        el("span", { class: "tgt-chart-value", text: percent ? fmtPct(c.value) : fnum(c.value) })))
+  );
+}
+
+function viewTarget(res) {
+  const current = (app.inspectParams.TARGET || {}).column || "";
+  const options = app.state.columns.filter((c) => c.kind !== "other").map((c) => c.name);
+  const select = el(
+    "select",
+    { class: "select-sm", "aria-label": "Target column",
+      onchange: (e) => { app.inspectParams.TARGET = { column: e.target.value }; renderInspect(); } },
+    el("option", { value: "", text: "Choose a column…" }),
+    options.map((c) => el("option", { value: c, text: c }))
+  );
+  select.value = current;
+  const picker = el(
+    "div",
+    { class: "card" },
+    el("h2", { text: "What do you want to explain?" }),
+    el("p", { class: "card-hint",
+      text: "Pick the column you care about (sales, rating, churned…). Every other column is ranked by how strongly it is related to it." }),
+    el("div", { class: "toolbar" }, el("label", { class: "field-inline" }, el("span", { text: "Target" }), select))
+  );
+  const s = res.summary;
+  if (!s) return el("div", {}, picker);
+
+  const tiles = el(
+    "div",
+    { class: "stats" },
+    stat("Rows with a target", fmt(s.rows), s.missingTarget ? `${fmt(s.missingTarget)} missing, left out` : "None missing",
+      s.missingTarget ? "warn" : "good"),
+    s.kind === "numeric"
+      ? stat("Average", fnum(s.mean), `median ${fnum(s.median)} · range ${fnum(s.min)} … ${fnum(s.max)}`)
+      : stat("Classes", fmt(s.classCount), s.classes.slice(0, 3).map((c) => `${c.label} (${fmt(c.count)})`).join(" · ")),
+    stat("Columns compared", fmt(res.columns.length), res.skipped.length ? `${res.skipped.length} skipped` : "All columns")
+  );
+
+  const rows = res.columns.map((c, i) =>
+    el(
+      "div",
+      { class: "tgt-row" },
+      el("div", { class: "tgt-main" },
+        el("div", { class: "tgt-head" },
+          el("span", { class: "tgt-rank muted", text: `${i + 1}` }),
+          el("span", { class: "tgt-name", text: c.column, title: c.column }),
+          el("span", { class: "chip", text: c.kind === "numeric" ? "number" : "category" }),
+          el("span", { class: "tgt-strength", text: c.strength })),
+        el("div", { class: "tgt-score" },
+          bar(c.score, c.p != null && c.p >= 0.05 ? "muted-bar" : ""),
+          el("span", { class: "mono", text: `${c.measure} = ${c.value.toFixed(2)}` })),
+        el("p", { class: "tgt-sentence", text: c.sentence }),
+        el("div", { class: "tgt-meta muted" },
+          `n = ${fmt(c.n)}`, " · ", c.p == null ? "p = —" : `p ${c.p < 0.001 ? "< 0.001" : `= ${c.p.toPrecision(2)}`}`)),
+      targetChart(c)
+    )
+  );
+  const ranked = el(
+    "div",
+    { class: "card" },
+    el("h2", { text: `Related to ${s.target}` }),
+    el("p", { class: "card-hint",
+      text: "Scores run from 0 (no relationship) to 1. Number vs number uses |Pearson r|, number vs category the correlation ratio η, category vs category Cramér's V. Grey bars could be chance (p ≥ 0.05). Related does not mean one causes the other." }),
+    rows.length ? el("div", { class: "tgt-list" }, rows) : note("info", "No other column could be compared.")
+  );
+  const skipped = res.skipped.length
+    ? el("details", { class: "card tgt-skipped" },
+      el("summary", { text: `Skipped columns (${res.skipped.length})` }),
+      el("ul", {}, res.skipped.map((k) => el("li", {}, el("strong", { text: k.column }), ` — ${k.skipped}`))))
+    : null;
+  return el("div", {}, picker, tiles, ranked, skipped);
+}
+
 const INSPECT_VIEWS = {
   QUALITY: viewQuality,
   STRUCTURE: viewStructure,
@@ -1119,6 +1207,7 @@ const INSPECT_VIEWS = {
   DUPES: viewDupes,
   OUTLIERS: viewOutliers,
   CORR: viewCorr,
+  TARGET: viewTarget,
 };
 
 async function renderInspect() {

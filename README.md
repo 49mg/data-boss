@@ -48,10 +48,11 @@ A **column detail picker** below the table lets you select any column and view i
 
 ### Data inspection
 
-- **Info** — column types, non-null counts, and memory usage
-- **Description** — statistical summary of numeric columns
-- **Missing values** — count of null entries per column
-- **Duplicates** — duplicate row detection and count
+- **Overview** — data-quality checks ranked by severity, each with a one-click fix in Clean
+- **Structure / Statistics** — column types, memory, distributions and summary statistics
+- **Missing values / Duplicates / Outliers** — where the gaps, copies and extreme values are
+- **Correlations** — strongest relationships between numeric columns
+- **Target** — pick the column you want to explain (sales, rating, churned…); every other column is ranked by how strongly it relates to it (|Pearson r|, correlation ratio η or Cramér's V), with a p-value, a small chart and a plain-language sentence
 
 ### Data cleaning
 
@@ -130,6 +131,7 @@ data-boss/
 ├── src/
 │   ├── base.py             # Abstract base classes (BaseDataInspector, BaseDataCleaner, BaseDataVisualizer)
 │   ├── inspectors.py       # DataInspector — read-only data summaries
+│   ├── target.py           # Target analysis: rank columns by relationship to one column
 │   ├── cleaners.py         # DataCleaner — dataframe mutations and CSV export
 │   └── visualizers.py      # DataVisualizer — Matplotlib/Seaborn charts
 └── pyproject.toml
@@ -166,7 +168,7 @@ The app looks for the Python interpreter in `.venv/` first and falls back to `py
 1. Click **Open file** (or drop a file on the window): CSV, TSV, Excel (.xlsx), Parquet, JSON or JSON Lines, max 200 MB. Separator and text encoding (including Arabic Windows-1256) are detected automatically; adjust them under **Import settings** on the Data screen.
 2. **Data** shows summary cards (rows, columns, missing cells, duplicates) and the rows themselves.
 3. **Column profile** shows each column's type, missing share, unique count and top values.
-4. **Inspect** has tabs for Info, Description, Missing values and Duplicated rows.
+4. **Inspect** has tabs for an overview of quality issues, structure, statistics, missing values, duplicates, outliers, correlations and target analysis.
 5. **Clean**: pick an operation, fill in any inputs, then click **Apply** — or **Undo** to revert. The history timeline and before/after tables show what each step changed.
 6. **Visualize**: pick a chart tile, choose columns, then **Render chart**. **Save PNG** saves it.
 7. Click **Export** to save the current (cleaned) data as CSV.
