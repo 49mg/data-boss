@@ -1179,5 +1179,6 @@
  "— Has {0} distinct values for {1} rows (almost one row per value, like an ID or contact detail); groups are too small to compare.": "— Has {0} distinct values for {1} rows (almost one row per value, like an ID or contact detail); groups are too small to compare.",
  "“{0}” holds dates stored as text": "“{0}” holds dates stored as text",
  "Converting it to dates enables trends, forecasts, date parts and correct sorting.": "Converting it to dates enables trends, forecasts, date parts and correct sorting.",
- "The lower end of the range is cut off at 0, because the values can't be negative.": "The lower end of the range is cut off at 0, because the values can't be negative."
+ "The lower end of the range is cut off at 0, because the values can't be negative.": "The lower end of the range is cut off at 0, because the values can't be negative.",
+ "Most of the model's skill comes from “{0}”. That is fine if it is known at the moment you would make a prediction; if it is only known afterwards (like the length of a sales call before the call), it is data leakage and the score is too optimistic.": "Most of the model's skill comes from “{0}”. That is fine if it is known at the moment you would make a prediction; if it is only known afterwards (like the length of a sales call before the call), it is data leakage and the score is too optimistic."
 }

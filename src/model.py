@@ -300,6 +300,14 @@ def _warnings(task, data, y, best, baseline, importance, pos, models):
         who = f" Most of it comes from “{top['feature']}”." if top else ""
         out.append({"kind": "leakage", "text": f"Suspiciously near-perfect score ({score:.3f}).{who} Check that no feature is "
                                                "derived from the target or only known after the outcome (data leakage)."})
+    elif top and len(importance) > 1 and (top["mean"] or 0) > 0 and not weak(task, best, baseline):
+        rest = [max(i["mean"] or 0, 0) for i in importance[1:]]
+        positive = (top["mean"] or 0) + sum(rest)
+        if top["mean"] >= 0.5 * positive and top["mean"] >= 2 * max(rest):
+            out.append({"kind": "dominant", "text": f"Most of the model's skill comes from “{top['feature']}”. That is fine if it is "
+                                                     "known at the moment you would make a prediction; if it is only known "
+                                                     "afterwards (like the length of a sales call before the call), it is data "
+                                                     "leakage and the score is too optimistic."})
     metric = "r2" if task == "regression" else "f1"
     label = "R²" if task == "regression" else "F1"
     for m in models:

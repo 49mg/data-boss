@@ -1179,5 +1179,6 @@
  "— Has {0} distinct values for {1} rows (almost one row per value, like an ID or contact detail); groups are too small to compare.": "— فيه {0} قيمة مختلفة لـ {1} صف (قيمة لكل صف تقريباً، كمعرّف أو بيانات اتصال)؛ المجموعات صغيرة جداً للمقارنة.",
  "“{0}” holds dates stored as text": "«{0}» يحتوي تواريخ مخزّنة كنص",
  "Converting it to dates enables trends, forecasts, date parts and correct sorting.": "تحويله إلى تواريخ يتيح الاتجاهات والتوقعات وأجزاء التاريخ والترتيب الصحيح.",
- "The lower end of the range is cut off at 0, because the values can't be negative.": "الحد الأدنى للنطاق مقطوع عند 0، لأن القيم لا يمكن أن تكون سالبة."
+ "The lower end of the range is cut off at 0, because the values can't be negative.": "الحد الأدنى للنطاق مقطوع عند 0، لأن القيم لا يمكن أن تكون سالبة.",
+ "Most of the model's skill comes from “{0}”. That is fine if it is known at the moment you would make a prediction; if it is only known afterwards (like the length of a sales call before the call), it is data leakage and the score is too optimistic.": "معظم قدرة النموذج تأتي من «{0}». هذا جيد إن كانت قيمته معروفة لحظة التنبؤ؛ أما إن كانت تُعرف بعدها فقط (مثل مدة مكالمة البيع قبل إجرائها) فهذا تسرّب بيانات والدرجة متفائلة أكثر من اللازم."
 }

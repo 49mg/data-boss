@@ -3975,7 +3975,7 @@ function modelView(res) {
   const verdict = el("div", { class: `test-verdict ${res.weak ? "none" : "found"}` },
     el("div", { class: "test-verdict-label", text: res.weak ? "Not much better than guessing" : "Result on unseen rows" }),
     el("p", { class: "test-sentence", text: res.summary }));
-  const warnings = res.warnings.map((w) => note("warn", w.text));
+  const warnings = res.warnings.map((w) => note(w.kind === "dominant" ? "info" : "warn", w.text));
   const cols = METRIC_COLUMNS[res.task];
   const table = el("div", { class: "table-wrap" },
     el("table", { class: "test-table" },
