@@ -27,6 +27,11 @@ def _connect(df):
 
 def _friendly(exc):
     text = str(exc).strip()
+    missing = re.search(r"Table with name (.+?) does not exist", text)
+    if missing:
+        name = missing.group(1)
+        return (f"There is no table called “{name}”. Your data is the table data. "
+                f"If {name} is a column, write it after SELECT, e.g. SELECT {quote_ident(name)} FROM data")
     # DuckDB prefixes messages with their kind, e.g. "Parser Error: ...". Keep it short.
     lines = [ln for ln in text.splitlines() if ln.strip()][:MAX_ERROR_LINES]
     return "\n".join(lines) or exc.__class__.__name__
