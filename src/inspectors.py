@@ -222,7 +222,17 @@ class DataInspector(BaseDataInspector):
                         {"method": "NORMALIZE_TEXT", "params": {"columns": [str(col)], "case": "title"},
                          "label": "Normalize text"})
 
+                looks_like_dates = False
                 if n > 20 and nunique == len(nonnull) and miss < 0.05:
+                    sample = nonnull.astype(str).head(200)
+                    if sample.str.contains(r"\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}").mean() > 0.9:
+                        parsed = pd.to_datetime(sample, errors="coerce", format="mixed")
+                        looks_like_dates = parsed.notna().mean() > 0.9
+                if looks_like_dates:
+                    add("warning", f"“{col}” holds dates stored as text",
+                        "Converting it to dates enables trends, forecasts, date parts and correct sorting.", [col],
+                        {"method": "TO_DATETIME", "params": {"columns": [str(col)]}, "label": "Convert to date"})
+                elif n > 20 and nunique == len(nonnull) and miss < 0.05:
                     add("info", f"“{col}” looks like an identifier",
                         "Every value is unique. Useful as a key, but not for grouping or charts.", [col])
 

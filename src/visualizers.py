@@ -454,7 +454,7 @@ class DataVisualizer(BaseDataVisualizer):
             value_label, how = "Count", "count"
         else:
             data = self._clean([x, y], notes)
-            series = data.groupby(x)[y].agg(agg)
+            series = data.groupby(x, observed=True)[y].agg(agg)
             # One row per category (e.g. an already aggregated query result): plain column name.
             value_label, how = (y if data[x].is_unique else f"{agg} of {y}"), agg
         series = self._sort_limit(series, sort, int(top_n or 15), notes)
@@ -517,7 +517,10 @@ class DataVisualizer(BaseDataVisualizer):
         if sort == "asc":
             series = series.sort_values(ascending=True)
         elif sort == "label":
-            series = series.sort_index(key=lambda i: i.astype(str))
+            if isinstance(series.index, pd.CategoricalIndex) and series.index.ordered:
+                series = series.sort_index()  # calendar order for weekdays, low to high for ranges
+            else:
+                series = series.sort_index(key=lambda i: i.astype(str))
         return series
 
     # ---- pair plot -------------------------------------------------------

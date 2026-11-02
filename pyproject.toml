@@ -23,7 +23,7 @@ dev = [
 [tool.ruff]
 line-length = 140
 target-version = "py310"
-extend-exclude = ["tests"]
+extend-exclude = ["tests", "case-studies"]  # case studies hold scripts exported by the app
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B"]

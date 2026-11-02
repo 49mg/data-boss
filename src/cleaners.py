@@ -433,14 +433,18 @@ class DataCleaner(BaseDataCleaner):
         return f"{verb} column '{name}' = {str(expression).strip()}."
 
     # part -> (function, pandas code after the column, nullable dtype or None)
+    MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+              "November", "December"]
+    WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    # Names are ordered categories so charts and pivots list them in calendar order, not alphabetically.
     DATE_PARTS = {
         "year": (lambda s: s.dt.year, "dt.year", "Int64"),
         "quarter": (lambda s: s.dt.quarter, "dt.quarter", "Int64"),
         "month": (lambda s: s.dt.month, "dt.month", "Int64"),
-        "month_name": (lambda s: s.dt.month_name(), "dt.month_name()", None),
+        "month_name": (lambda s: s.dt.month_name(), "dt.month_name()", MONTHS),
         "week": (lambda s: s.dt.isocalendar().week, "dt.isocalendar().week", "Int64"),
         "day": (lambda s: s.dt.day, "dt.day", "Int64"),
-        "weekday": (lambda s: s.dt.day_name(), "dt.day_name()", None),
+        "weekday": (lambda s: s.dt.day_name(), "dt.day_name()", WEEKDAYS),
         "weekday_num": (lambda s: s.dt.dayofweek, "dt.dayofweek", "Int64"),
         "hour": (lambda s: s.dt.hour, "dt.hour", "Int64"),
     }
@@ -460,8 +464,12 @@ class DataCleaner(BaseDataCleaner):
             func, accessor, dtype = self.DATE_PARTS[part]
             new = f"{column}_{part}"
             values = func(self.df[column])
-            self.df[new] = values.astype(dtype) if dtype else values
-            cast = f".astype({dtype!r})" if dtype else ""
+            if isinstance(dtype, list):
+                self.df[new] = values.astype(pd.CategoricalDtype(dtype, ordered=True))
+                cast = f".astype(pd.CategoricalDtype({dtype!r}, ordered=True))"
+            else:
+                self.df[new] = values.astype(dtype) if dtype else values
+                cast = f".astype({dtype!r})" if dtype else ""
             lines.append(f"df[{new!r}] = df[{column!r}].{accessor}{cast}")
             added.append(new)
         self.code = "\n".join(lines)

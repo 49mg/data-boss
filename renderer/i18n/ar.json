@@ -1176,5 +1176,7 @@
  "Restart to update": "أعد التشغيل للتحديث",
  "Restart to update to {0}": "أعد التشغيل للتحديث إلى {0}",
  "Version {0} is ready. Restart Data Boss to use it.": "الإصدار {0} جاهز. أعد تشغيل Data Boss لاستخدامه.",
- "— Has {0} distinct values for {1} rows (almost one row per value, like an ID or contact detail); groups are too small to compare.": "— فيه {0} قيمة مختلفة لـ {1} صف (قيمة لكل صف تقريباً، كمعرّف أو بيانات اتصال)؛ المجموعات صغيرة جداً للمقارنة."
+ "— Has {0} distinct values for {1} rows (almost one row per value, like an ID or contact detail); groups are too small to compare.": "— فيه {0} قيمة مختلفة لـ {1} صف (قيمة لكل صف تقريباً، كمعرّف أو بيانات اتصال)؛ المجموعات صغيرة جداً للمقارنة.",
+ "“{0}” holds dates stored as text": "«{0}» يحتوي تواريخ مخزّنة كنص",
+ "Converting it to dates enables trends, forecasts, date parts and correct sorting.": "تحويله إلى تواريخ يتيح الاتجاهات والتوقعات وأجزاء التاريخ والترتيب الصحيح."
 }
