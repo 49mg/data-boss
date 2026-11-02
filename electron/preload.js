@@ -1,6 +1,12 @@
 const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
+const locale = ipcRenderer.sendSync("locale-sync");
+
+contextBridge.exposeInMainWorld("locale", locale);
+if (locale.collect) contextBridge.exposeInMainWorld("i18nCollect", (strings) => ipcRenderer.send("i18n-collect", strings));
+
 contextBridge.exposeInMainWorld("api", {
+  setLanguage: (lang) => ipcRenderer.invoke("set-language", lang),
   call: (cmd, args, tag) => ipcRenderer.invoke("backend", cmd, args, tag),
   cancel: (tag) => ipcRenderer.invoke("cancel", tag),
   openFile: () => ipcRenderer.invoke("open-file"),
@@ -12,6 +18,6 @@ contextBridge.exposeInMainWorld("api", {
   copyText: (text) => ipcRenderer.invoke("copy-text", text),
   copyImage: (dataUrl) => ipcRenderer.invoke("copy-image", dataUrl),
   saveText: (text, suggestedName) => ipcRenderer.invoke("save-text", text, suggestedName),
-  exportReport: (bodyHtml, title, format, testPath) => ipcRenderer.invoke("export-report", bodyHtml, title, format, testPath),
+  exportReport: (bodyHtml, title, format, testPath) => ipcRenderer.invoke("export-report", bodyHtml, title, format, testPath, locale.lang),
   onBackendExit: (fn) => ipcRenderer.on("backend-exit", (_e, reason) => fn(reason)),
 });

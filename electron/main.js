@@ -130,6 +130,57 @@ function createWindow() {
   win.loadFile(path.join(ROOT, "renderer", "index.html"));
 }
 
+// ---- language ---------------------------------------------------------------
+
+const LANGUAGES = ["en", "ar"];
+const settingsPath = () => path.join(app.getPath("userData"), "settings.json");
+
+function readSettings() {
+  try {
+    return JSON.parse(fs.readFileSync(settingsPath(), "utf-8"));
+  } catch {
+    return {};
+  }
+}
+
+function currentLanguage() {
+  const forced = process.env.DATABOSS_LANG;
+  if (LANGUAGES.includes(forced)) return forced;
+  const saved = readSettings().language;
+  return LANGUAGES.includes(saved) ? saved : "en";
+}
+
+// Sent synchronously once at startup so the first paint is already translated.
+ipcMain.on("locale-sync", (e) => {
+  const lang = currentLanguage();
+  let messages = {};
+  if (lang !== "en") {
+    try {
+      messages = JSON.parse(fs.readFileSync(path.join(ROOT, "renderer", "i18n", `${lang}.json`), "utf-8"));
+    } catch (err) {
+      console.error("Could not read translations:", err.message);
+    }
+  }
+  e.returnValue = { lang, messages, collect: process.env.DATABOSS_I18N_COLLECT === "1" };
+});
+
+// Development aid: with DATABOSS_I18N_COLLECT=1 every interface string shown is appended to a file,
+// so translations can cover exactly what users see.
+ipcMain.on("i18n-collect", (_e, strings) => {
+  const file = process.env.DATABOSS_I18N_COLLECT_FILE;
+  if (process.env.DATABOSS_I18N_COLLECT !== "1" || !file || !Array.isArray(strings)) return;
+  fs.appendFileSync(file, strings.map((x) => JSON.stringify(String(x))).join("\n") + "\n", "utf-8");
+});
+
+ipcMain.handle("set-language", async (_e, lang) => {
+  if (!LANGUAGES.includes(lang)) return false;
+  const settings = { ...readSettings(), language: lang };
+  await fs.promises.mkdir(path.dirname(settingsPath()), { recursive: true });
+  await fs.promises.writeFile(settingsPath(), JSON.stringify(settings, null, 2), "utf-8");
+  if (win) win.webContents.reload();
+  return true;
+});
+
 ipcMain.handle("backend", (_e, cmd, args, tag) => callBackend(cmd, args, tag || null));
 ipcMain.handle("cancel", (_e, tag) => cancelTagged(String(tag)));
 
@@ -228,17 +279,30 @@ ipcMain.handle("save-text", async (_e, text, suggestedName) => {
 
 const escapeHtml = (t) => String(t).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
-async function reportHtml(bodyHtml, title) {
+async function arabicFontCss() {
+  // Embed the bundled Arabic font so the report reads correctly on computers without one.
+  const faces = [];
+  for (const weight of [400, 700]) {
+    const file = path.join(__dirname, "..", "renderer", "fonts", `noto-sans-arabic-arabic-${weight}-normal.woff2`);
+    const data = (await fs.promises.readFile(file)).toString("base64");
+    faces.push(`@font-face{font-family:"Noto Sans Arabic";font-weight:${weight};src:url(data:font/woff2;base64,${data}) format("woff2");}`);
+  }
+  return faces.join("\n") + '\n.report-doc{font-family:"Noto Sans Arabic","Geist",-apple-system,"Segoe UI",Tahoma,Arial,sans-serif}';
+}
+
+async function reportHtml(bodyHtml, title, lang = "en") {
   const css = await fs.promises.readFile(path.join(__dirname, "..", "renderer", "report.css"), "utf-8");
+  const rtl = lang === "ar";
+  const fonts = rtl ? await arabicFontCss() : "";
   return [
     "<!doctype html>",
-    '<html lang="en">',
+    `<html lang="${rtl ? "ar" : "en"}" dir="${rtl ? "rtl" : "ltr"}">`,
     "<head>",
     '<meta charset="utf-8">',
     '<meta name="viewport" content="width=device-width, initial-scale=1">',
     '<meta name="generator" content="Data Boss">',
     `<title>${escapeHtml(title || "Report")}</title>`,
-    `<style>html,body{margin:0;background:#fff}\n${css}</style>`,
+    `<style>html,body{margin:0;background:#fff}\n${css}\n${fonts}</style>`,
     "</head>",
     `<body>${bodyHtml}</body>`,
     "</html>",
@@ -270,7 +334,7 @@ const REPORT_FILTERS = {
   pdf: { name: "PDF document", extensions: ["pdf"] },
 };
 
-ipcMain.handle("export-report", async (_e, bodyHtml, title, format, testPath) => {
+ipcMain.handle("export-report", async (_e, bodyHtml, title, format, testPath, lang) => {
   const fmt = format === "pdf" ? "pdf" : "html";
   let filePath = process.env.DATABOSS_E2E === "1" && testPath ? String(testPath) : null;
   if (!filePath) {
@@ -283,7 +347,7 @@ ipcMain.handle("export-report", async (_e, bodyHtml, title, format, testPath) =>
     if (res.canceled || !res.filePath) return null;
     filePath = res.filePath;
   }
-  const html = await reportHtml(String(bodyHtml), title);
+  const html = await reportHtml(String(bodyHtml), title, lang === "ar" ? "ar" : "en");
   if (fmt === "pdf") await fs.promises.writeFile(filePath, await htmlToPdf(html));
   else await fs.promises.writeFile(filePath, html, "utf-8");
   return { path: filePath };

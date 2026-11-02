@@ -27,20 +27,21 @@
 .report-doc p { margin: 0 0 10px; }
 .report-doc .r-text { white-space: pre-wrap; }
 .report-doc img { display: block; max-width: 100%; height: auto; border: 1px solid var(--r-border); border-radius: 8px; }
-.report-doc ul { margin: 10px 0 0; padding-left: 20px; }
+.report-doc ul { margin: 10px 0 0; padding-inline-start: 20px; }
 .report-doc li { margin: 3px 0; }
-.report-doc .r-callout { background: var(--r-soft); border-left: 3px solid var(--r-accent); border-radius: 6px; padding: 12px 16px; margin: 0 0 12px; }
-.report-doc .r-callout.good { border-left-color: var(--r-good); }
+.report-doc .r-callout { background: var(--r-soft); border-inline-start: 3px solid var(--r-accent); border-radius: 6px; padding: 12px 16px; margin: 0 0 12px; }
+.report-doc .r-callout.good { border-inline-start-color: var(--r-good); }
 .report-doc .r-stats { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 10px; }
 .report-doc .r-stat { border: 1px solid var(--r-border); border-radius: 8px; padding: 8px 12px; min-width: 140px; }
 .report-doc .r-stat b { display: block; font-size: 17px; }
 .report-doc .r-stat span { color: var(--r-muted); font-size: 12px; }
 .report-doc .r-small { color: var(--r-muted); font-size: 12.5px; }
 .report-doc table { border-collapse: collapse; width: 100%; font-size: 13px; }
-.report-doc th, .report-doc td { border-bottom: 1px solid var(--r-border); padding: 6px 10px; text-align: left; }
+.report-doc th, .report-doc td { border-bottom: 1px solid var(--r-border); padding: 6px 10px; text-align: start; }
 .report-doc th { background: var(--r-soft); font-weight: 600; }
-.report-doc td.num, .report-doc th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.report-doc td.num, .report-doc th.num { text-align: end; font-variant-numeric: tabular-nums; unicode-bidi: plaintext; }
 .report-doc tr.r-total td { font-weight: 600; border-top: 2px solid var(--r-border); }
+.report-doc .r-chart, .report-doc img { direction: ltr; }
 .report-doc .r-chart svg { display: block; width: 100%; height: auto; border: 1px solid var(--r-border); border-radius: 8px; padding: 8px; }
 .report-doc .trend-grid { stroke: var(--r-border); stroke-width: 1; }
 .report-doc .trend-axis { fill: var(--r-muted); font: 11px ui-monospace, Menlo, Consolas, monospace; }

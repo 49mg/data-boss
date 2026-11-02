@@ -29,6 +29,7 @@
         <symbol id="i-model" viewBox="0 0 24 24"><circle cx="6" cy="7" r="2"/><circle cx="6" cy="17" r="2"/><circle cx="18" cy="12" r="2"/><path d="M8 7.8 16 11M8 16.2 16 13"/></symbol>
         <symbol id="i-dash" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="9" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="5" rx="1.5"/><rect x="13.5" y="11.5" width="7" height="9" rx="1.5"/><rect x="3.5" y="15.5" width="7" height="5" rx="1.5"/></symbol>
         <symbol id="i-pin" viewBox="0 0 24 24"><path d="M9 3.5h6l-1 6 3.5 3.5h-11L10 9.5l-1-6ZM12 13v7.5"/></symbol>
+        <symbol id="i-lang" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.4 2.5 3.5 5.3 3.5 8.5s-1.1 6-3.5 8.5c-2.4-2.5-3.5-5.3-3.5-8.5s1.1-6 3.5-8.5Z"/></symbol>
         <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
         <symbol id="i-up" viewBox="0 0 24 24"><path d="m6 14 6-6 6 6"/></symbol>
         <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 10 6 6 6-6"/></symbol>
@@ -101,6 +102,9 @@
         </nav>
 
         <div class="sidebar-foot">
+          <button id="btn-lang" class="nav-item" title="Interface language">
+            <svg class="icon"><use href="#i-lang"/></svg><span id="lang-label" lang="ar">العربية</span>
+          </button>
           <button id="btn-theme" class="nav-item">
             <svg class="icon"><use href="#i-theme"/></svg><span id="theme-label">Dark mode</span>
           </button>
@@ -690,6 +694,7 @@
     <div id="busy" class="busy" hidden></div>
 
     <script src="vendor/echarts/echarts.min.js"></script>
+    <script src="i18n.js"></script>
     <script src="citymap.js"></script>
     <script src="app.js"></script>
   </body>

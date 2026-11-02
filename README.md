@@ -85,6 +85,10 @@ Every chart, pivot table, trend, segment comparison and test result has a **Repo
 
 **Notebook** (in the Clean history panel and on Visualize) saves the session as a `.ipynb`: loading the file, every cleaning step with the message the app showed, and your recent charts with their insights. Run it next to the data file and it produces exactly the same cleaned data. CI executes an exported notebook with `jupyter nbconvert --execute` on every push.
 
+### Arabic interface
+
+Click **العربية** at the bottom of the sidebar to switch the whole interface to Arabic, with a right-to-left layout and a bundled Arabic font (Noto Sans Arabic); click **English** to switch back. Analysis sentences from the Python engine are translated too, numbers and charts stay left to right, and reports exported in Arabic are right to left with the font embedded. Your data (column names and values) is never translated. Translations live in `renderer/i18n/ar.json`: the key is the English text and `{0}`, `{1}` mark values filled in at runtime, so adding a language is a matter of adding a file.
+
 ### Data cleaning
 
 
@@ -162,6 +166,8 @@ data-boss/
 │   ├── app.js              # UI logic
 │   ├── theme.js            # Applies the saved/system theme before first paint
 │   ├── vendor/echarts/     # Apache ECharts 5.5.1 (Apache-2.0, see its LICENSE and NOTICE)
+│   ├── i18n.js             # Interface language: translation lookup and right-to-left switch
+│   ├── i18n/               # en.json (string catalogue) and ar.json (Arabic)
 │   ├── report.css          # Styles for the report preview and exported HTML/PDF
 │   ├── citymap.js          # Decorative city-map background
 │   └── fonts/              # Bundled Geist font (SIL Open Font License)

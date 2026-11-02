@@ -1,3 +1,7 @@
+/* global echarts, tr, i18n */
+// Static texts in index.html follow the interface language.
+i18n.translateDom(document.body);
+
 "use strict";
 
 const PAGE_SIZE = 100;
@@ -171,19 +175,24 @@ function cleanError(err) {
 /* small DOM helpers                                                    */
 /* ------------------------------------------------------------------ */
 
+/** Create an element. Text, string children and title/placeholder/aria-label go through tr()
+ *  (interface language) unless `raw: true` marks the content as data (cells, column names). */
+const TRANSLATED_ATTRS = new Set(["title", "placeholder", "aria-label"]);
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
+  const raw = attrs.raw === true;
+  const t = raw ? (v) => v : tr;
   for (const [k, v] of Object.entries(attrs)) {
-    if (v === undefined || v === null || v === false) continue;
+    if (v === undefined || v === null || v === false || k === "raw") continue;
     if (k === "class") node.className = v;
-    else if (k === "text") node.textContent = v;
+    else if (k === "text") node.textContent = t(typeof v === "string" ? v : String(v));
     else if (k === "style") node.style.cssText = v; // CSSOM is allowed by the CSP; style="" attributes are not
     else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
-    else node.setAttribute(k, v === true ? "" : v);
+    else node.setAttribute(k, v === true ? "" : TRANSLATED_ATTRS.has(k) && typeof v === "string" ? t(v) : v);
   }
   for (const c of children.flat()) {
     if (c === null || c === undefined) continue;
-    node.append(c instanceof Node ? c : document.createTextNode(String(c)));
+    node.append(c instanceof Node ? c : document.createTextNode(t(String(c))));
   }
   return node;
 }
@@ -244,9 +253,9 @@ function renderTable(container, payload, { showIndex = true, indexLabel = "", ty
       const m = meta && meta.get(c);
       return el(
         "th",
-        { title: c, class: m && m.kind === "numeric" ? "num" : null },
+        { title: c, class: m && m.kind === "numeric" ? "num" : null, raw: true },
         c,
-        m ? el("span", { class: "th-type", text: m.dtype }) : null
+        m ? el("span", { class: "th-type", text: m.dtype, raw: true }) : null
       );
     })
   );
@@ -254,10 +263,10 @@ function renderTable(container, payload, { showIndex = true, indexLabel = "", ty
     el(
       "tr",
       {},
-      showIndex ? el("td", { class: "idx", text: payload.index[i] }) : null,
+      showIndex ? el("td", { class: "idx", text: payload.index[i], raw: true }) : null,
       row.map((v) => {
         const { text, cls } = formatCell(v);
-        return el("td", { class: cls, text, title: text });
+        return el("td", { class: cls, text, title: text, raw: true });
       })
     )
   );
@@ -391,7 +400,7 @@ function setState(snapshot) {
   $("topbar-title").hidden = true;
   $("file-name").textContent = snapshot.fileName;
   $("file-name").title = snapshot.path || "";
-  $("file-meta").textContent = `${plural(rows, "row")} · ${plural(cols, "column")}`;
+  $("file-meta").textContent = tr(`${plural(rows, "row")} · ${plural(cols, "column")}`);
   const ops = snapshot.log.length;
   $("nav-clean-badge").hidden = ops === 0;
   $("nav-clean-badge").textContent = ops;
@@ -499,7 +508,7 @@ async function loadPage() {
     renderTable($("data-table"), res.table, { types: true });
     const start = res.total === 0 ? 0 : res.offset + 1;
     const end = Math.min(res.offset + PAGE_SIZE, res.total);
-    $("page-label").textContent = `${fmt(start)}–${fmt(end)} of ${fmt(res.total)}`;
+    $("page-label").textContent = trf("{0}–{1} of {2}", fmt(start), fmt(end), fmt(res.total));
     $("page-prev").disabled = app.page === 0;
     $("page-next").disabled = end >= res.total;
   } catch (err) {
@@ -562,7 +571,7 @@ const OPENABLE = [".csv", ".tsv", ".tab", ".txt", ".xlsx", ".xlsm", ".parquet", 
 function pickSheet(sheets, fileName) {
   return new Promise((resolve) => {
     const dlg = $("sheet-dialog");
-    $("sheet-sub").textContent = `${fileName} has ${sheets.length} sheets. Which one do you want to open?`;
+    $("sheet-sub").textContent = tr(`${fileName} has ${sheets.length} sheets. Which one do you want to open?`);
     let chosen = null;
     $("sheet-list").replaceChildren(
       ...sheets.map((name) =>
@@ -1576,9 +1585,9 @@ function renderCleanFields() {
   $("op-body").hidden = !method;
   if (!method) return;
   const info = opInfo(method);
-  $("op-group").textContent = info.group;
-  $("op-title").textContent = info.label;
-  $("clean-desc").textContent = info.desc;
+  $("op-group").textContent = tr(info.group);
+  $("op-title").textContent = tr(info.label);
+  $("clean-desc").textContent = tr(info.desc);
 
   const memory = (app.forms.clean[method] ||= {});
   const specs = cleanSpecs(method, memory);
@@ -1659,21 +1668,21 @@ async function runPreview() {
 }
 
 function changeTable(changes) {
-  const head = el("tr", {}, el("th", { class: "idx", text: "Row" }), changes.columns.map((c) => el("th", { text: c })));
+  const head = el("tr", {}, el("th", { class: "idx", text: "Row" }), changes.columns.map((c) => el("th", { text: c, raw: true })));
   const body = changes.rows.map((r) =>
     el(
       "tr",
       {},
-      el("td", { class: "idx", text: r.row }),
+      el("td", { class: "idx", text: r.row, raw: true }),
       r.cells.map((cell) => {
         const show = (v) => (v == null ? "NaN" : v);
-        if (!cell.changed) return el("td", { class: "muted", text: show(cell.before) });
+        if (!cell.changed) return el("td", { class: "muted", text: show(cell.before), raw: true });
         return el(
           "td",
-          { class: "diff-cell", title: `${show(cell.before)} → ${show(cell.after)}` },
-          el("span", { class: `diff-before ${cell.before == null ? "null" : ""}`, text: show(cell.before) }),
-          el("span", { class: "diff-arrow", text: "→" }),
-          el("span", { class: `diff-after ${cell.after == null ? "null" : ""}`, text: show(cell.after) })
+          { class: "diff-cell", title: `${show(cell.before)} → ${show(cell.after)}`, raw: true },
+          el("span", { class: `diff-before ${cell.before == null ? "null" : ""}`, text: show(cell.before), raw: true }),
+          el("span", { class: "diff-arrow", text: "→", raw: true }),
+          el("span", { class: `diff-after ${cell.after == null ? "null" : ""}`, text: show(cell.after), raw: true })
         );
       })
     )
@@ -1826,11 +1835,11 @@ function confirmButton(label, confirmLabel, onConfirm) {
       return;
     }
     btn.classList.add("armed");
-    btn.querySelector("span").textContent = confirmLabel;
+    btn.querySelector("span").textContent = tr(confirmLabel);
     armed = setTimeout(() => {
       armed = null;
       btn.classList.remove("armed");
-      btn.querySelector("span").textContent = label;
+      btn.querySelector("span").textContent = tr(label);
     }, 3000);
   });
   return btn;
@@ -1838,7 +1847,7 @@ function confirmButton(label, confirmLabel, onConfirm) {
 
 function renderHistory() {
   const log = app.state.log;
-  $("history-summary").textContent = log.length ? `History · ${plural(log.length, "step")}` : "History";
+  $("history-summary").textContent = tr(log.length ? `History · ${plural(log.length, "step")}` : "History");
   $("btn-code").disabled = !log.length;
   const list = $("history-list");
   list.replaceChildren();
@@ -1882,8 +1891,8 @@ function renderHistory() {
 
 function openCodeDialog(title, sub, code, fileName) {
   app.script = { code, fileName };
-  $("code-title").textContent = title;
-  $("code-sub").textContent = sub;
+  $("code-title").textContent = tr(title);
+  $("code-sub").textContent = tr(sub);
   $("code-text").textContent = code;
   $("code-dialog").showModal();
 }
@@ -1902,8 +1911,8 @@ function renderPreview() {
   $("preview").hidden = !preview;
   if (!preview) return;
   const label = (name, shape) => `${name} · ${plural(shape[0], "row")} × ${plural(shape[1], "col")}`;
-  $("preview-before-title").textContent = label("Before", preview.before.shape);
-  $("preview-after-title").textContent = label("After", preview.after.shape);
+  $("preview-before-title").textContent = tr(label("Before", preview.before.shape));
+  $("preview-after-title").textContent = tr(label("After", preview.after.shape));
   renderTable($("preview-before"), preview.before.table);
   renderTable($("preview-after"), preview.after.table, { types: true });
 }
@@ -2044,7 +2053,7 @@ async function runQuery() {
   } catch (err) {
     if (seq !== querySeq || isCancelled(err)) return;
     app.query.result = null;
-    $("query-meta").textContent = "";
+    $("query-meta").textContent = tr("");
     $("query-actions").hidden = true;
     out.replaceChildren(el("pre", { class: "query-error", text: cleanError(err) }));
   } finally {
@@ -2261,7 +2270,7 @@ function schedulePivot(delay = 250) {
   clearTimeout(pivotTimer);
   if (!(pivotValues.rows && pivotValues.rows.length)) {
     $("pivot-actions").hidden = true;
-    $("pivot-sub").textContent = "";
+    $("pivot-sub").textContent = tr("");
     $("pivot-output").replaceChildren(note("info", "Pick at least one column for the rows."));
     $("pivot-notes").replaceChildren();
     return;
@@ -2270,10 +2279,10 @@ function schedulePivot(delay = 250) {
 }
 
 function pivotSubtitle(p) {
-  const what = p.values ? `${p.agg === "nunique" ? "distinct" : p.agg} of ${p.values}` : "number of rows";
-  const by = [p.rows.join(" × "), p.columns].filter(Boolean).join(" by ");
-  const pct = { row: " · % of row", column: " · % of column", total: " · % of grand total" }[p.percent] || "";
-  return `${what} by ${by}${pct}`;
+  const what = p.values ? (p.agg === "nunique" ? trf("distinct {0}", p.values) : trf(`${p.agg} of {0}`, p.values)) : tr("number of rows");
+  const by = [p.rows.join(" × "), p.columns].filter(Boolean).join(tr(" by "));
+  const pct = { row: ` · ${tr("% of row")}`, column: ` · ${tr("% of column")}`, total: ` · ${tr("% of grand total")}` }[p.percent] || "";
+  return `${trf("{0} by {1}", what, by)}${pct}`;
 }
 
 async function runPivot() {
@@ -2289,7 +2298,7 @@ async function runPivot() {
     const res = await callLatest("pivot", "pivot", { params });
     if (seq !== pivotSeq) return;
     app.pivot = { params, res };
-    $("pivot-sub").textContent = pivotSubtitle(params);
+    $("pivot-sub").textContent = tr(pivotSubtitle(params));
     $("pivot-actions").hidden = false;
     out.replaceChildren(pivotTable(res));
     $("pivot-notes").replaceChildren(...res.notes.map((t) => el("p", { text: t })));
@@ -2326,15 +2335,15 @@ function pivotTable(res) {
   const fmtCell = (v) => (v == null ? "—" : res.percent ? `${fnum(v)}%` : fnum(v));
 
   const head = el("tr", {}, t.columns.map((c, i) =>
-    el("th", { text: c, title: c, class: [i >= nRows ? "num" : "", isTotalCol(c) ? "total" : ""].join(" ") })));
+    el("th", { text: c, title: c, raw: c !== "Total", class: [i >= nRows ? "num" : "", isTotalCol(c) ? "total" : ""].join(" ") })));
   const body = t.data.map((row, i) => {
     const totalRow = lastIsTotal && i === t.data.length - 1;
     return el("tr", { class: totalRow ? "total-row" : null },
       row.map((v, j) => {
-        if (j < nRows) return el("td", { class: "rowkey", text: v ?? "", title: v ?? "" });
+        if (j < nRows) return el("td", { class: "rowkey", text: v ?? "", title: v ?? "", raw: !(totalRow && v === "Total") });
         const col = t.columns[j];
         const cls = ["cell", v == null ? "empty" : "", isTotalCol(col) ? "total" : ""].join(" ");
-        const cell = el("td", { class: cls, text: fmtCell(v) });
+        const cell = el("td", { class: cls, text: fmtCell(v), raw: true });
         if (!totalRow && !isTotalCol(col) && typeof v === "number") {
           cell.style.background = `color-mix(in srgb, var(--primary) ${shade(v).toFixed(0)}%, var(--surface))`;
         }
@@ -2439,7 +2448,7 @@ function scheduleSegment(delay = 250) {
   const missing = conds.find((c) => !["is_missing", "not_missing"].includes(c.operator) && !c.value.trim());
   if (!conds.length || missing) {
     $("segment-actions").hidden = true;
-    $("segment-sub").textContent = "";
+    $("segment-sub").textContent = tr("");
     $("segment-output").replaceChildren(note("info", "Describe the segment: pick a column, a condition and a value, e.g. churned equals yes."));
     return;
   }
@@ -2457,7 +2466,7 @@ async function runSegment() {
     const res = await callLatest("segment", "segment", { conditions: segmentConditions(segmentValues) });
     if (seq !== segmentSeq) return;
     app.segment = res;
-    $("segment-sub").textContent = `${res.label} · ${fmt(res.segmentRows)} vs ${fmt(res.restRows)} rows`;
+    $("segment-sub").textContent = trf("{0} · {1} vs {2} rows", tr(res.label), fmt(res.segmentRows), fmt(res.restRows));
     $("segment-actions").hidden = false;
     out.replaceChildren(segmentView(res));
   } catch (err) {
@@ -2504,7 +2513,7 @@ function segmentView(res) {
           el("span", { class: `tgt-strength ${c.significant ? "good-text" : ""}`, text: c.significant ? "differs" : "not clear" })),
         el("p", { class: "tgt-sentence", text: c.sentence }),
         el("div", { class: "tgt-meta muted" },
-          `${c.test} · adjusted p ${pText(c.pAdjusted)} · ${c.effectName} ${c.effect.toFixed(2)} · n = ${fmt(c.segment.n)} / ${fmt(c.rest.n)}`)),
+          trf("{0} · adjusted p {1} · {2} {3} · n = {4} / {5}", tr(c.test), pText(c.pAdjusted), tr(c.effectName), c.effect.toFixed(2), fmt(c.segment.n), fmt(c.rest.n)))),
       bars);
   });
   const list = el("div", { class: "card seg-card" },
@@ -2539,7 +2548,7 @@ function renderTrendFields(run = false) {
       el("button", { class: "btn btn-sm", onclick: () => openFix({ method: "TO_DATETIME", label: "Convert to date" }) },
         icon("i-clean"), "Convert to date…"));
     $("trend-actions").hidden = true;
-    $("trend-sub").textContent = "";
+    $("trend-sub").textContent = tr("");
     $("trend-output").replaceChildren(note("info", "Trends need a date column."));
     app.trendStale = false;
     return;
@@ -2594,7 +2603,7 @@ async function runTrend() {
     const res = await callLatest("trends", "trends", { params });
     if (seq !== trendSeq) return;
     app.trend = { params, res };
-    $("trend-sub").textContent = `${res.label} per ${res.unit}${res.compare === "year" ? " · vs a year earlier" : ""}`;
+    $("trend-sub").textContent = `${trf("{0} per {1}", tr(res.label), tr(res.unit))}${res.compare === "year" ? ` · ${tr("vs a year earlier")}` : ""}`;
     $("trend-actions").hidden = false;
     out.replaceChildren(trendView(res));
   } catch (err) {
@@ -2622,7 +2631,7 @@ function trendChart(rows, hasAvg) {
   const svg = (tag, attrs, text) => {
     const n = document.createElementNS(ns, tag);
     for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
-    if (text != null) n.textContent = text;
+    if (text != null) n.textContent = tr(text);
     return n;
   };
   const root = svg("svg", { viewBox: `0 0 ${W} ${H}`, class: "trend-svg", role: "img", "aria-label": "Trend chart" });
@@ -2742,8 +2751,8 @@ function scheduleTest(delay = 250) {
   app.testStale = false;
   if (!testValues.outcome || !testValues.by || testValues.outcome === testValues.by) {
     $("test-actions").hidden = true;
-    $("test-name").textContent = "Statistical test";
-    $("test-question").textContent = "";
+    $("test-name").textContent = tr("Statistical test");
+    $("test-question").textContent = tr("");
     $("test-output").replaceChildren(note("info", "Pick two different columns."));
     return;
   }
@@ -2761,16 +2770,16 @@ async function runTest() {
     const res = await callLatest("stats", "stats_test", testParams(testValues));
     if (seq !== testSeq) return;
     app.test = res;
-    $("test-name").textContent = res.test;
-    $("test-question").textContent = res.question;
+    $("test-name").textContent = tr(res.test);
+    $("test-question").textContent = tr(res.question);
     $("test-actions").hidden = false;
     out.replaceChildren(testResult(res));
   } catch (err) {
     if (seq !== testSeq || isCancelled(err)) return;
     app.test = null;
     $("test-actions").hidden = true;
-    $("test-name").textContent = "Statistical test";
-    $("test-question").textContent = "";
+    $("test-name").textContent = tr("Statistical test");
+    $("test-question").textContent = tr("");
     out.replaceChildren(note("warn", cleanError(err)));
   } finally {
     clearTimeout(showLoading);
@@ -2808,7 +2817,7 @@ function testResult(res) {
     stat("p-value", pText(res.p), found ? `below ${res.alpha}: unlikely to be chance alone` : `${res.alpha} or above: could be chance`,
       found ? "good" : ""),
     stat(eff.name, eff.value == null ? "—" : (eff.value > 0 && res.kind === "correlation" ? "+" : "") + eff.value.toFixed(2),
-      `${eff.size} · ${eff.explain}`),
+      `${tr(eff.size)} · ${tr(eff.explain)}`),
     res.ci
       ? stat("95% confidence interval", `${fnum(res.ci.low)} … ${fnum(res.ci.high)}`, res.ci.label)
       : stat("Rows used", fmt(res.n), res.dropped ? `${fmt(res.dropped)} left out (empty values)` : "No rows left out")
@@ -3108,18 +3117,19 @@ function selectChart(kind, params) {
   renderChartFields(true);
 }
 
-const chartLabel = () => (CHART_TYPES.find((t) => t.kind === app.chartKind) || { label: "Chart" }).label;
+const chartLabel = () => tr((CHART_TYPES.find((t) => t.kind === app.chartKind) || { label: "Chart" }).label);
 
 function chartSubtitle(kind, v) {
-  const by = (a, b) => (b ? `${a} by ${b}` : a);
+  const by = (a, b) => (b ? trf("{0} by {1}", a, b) : a);
+  const of = (a, col) => trf(`${a} of {0}`, col);
   switch (kind) {
     case "HIST": return by(v.column, v.hue);
     case "BOX": return by(v.y, v.x);
-    case "SCAT": return `${v.y} vs ${v.x}${v.hue ? `, colored by ${v.hue}` : ""}`;
-    case "HEAT": return `${(v.columns || []).length} columns · ${v.method || "pearson"}`;
-    case "LINE": return `${v.agg && v.agg !== "none" ? `${v.agg} of ` : ""}${v.y} over ${v.x}`;
-    case "BAR": return v.y ? `${v.agg || "mean"} of ${v.y} by ${v.x}` : `rows per ${v.x}`;
-    case "COUNT": return `values in ${v.column}`;
+    case "SCAT": return v.hue ? trf("{0} vs {1}, colored by {2}", v.y, v.x, v.hue) : trf("{0} vs {1}", v.y, v.x);
+    case "HEAT": return trf("{0} columns · {1}", (v.columns || []).length, v.method || "pearson");
+    case "LINE": return v.agg && v.agg !== "none" ? trf("{0} over {1}", of(v.agg, v.y), v.x) : trf("{0} over {1}", v.y, v.x);
+    case "BAR": return v.y ? trf("{0} by {1}", of(v.agg || "mean", v.y), v.x) : trf("rows per {0}", v.x);
+    case "COUNT": return trf("values in {0}", v.column);
     case "PAIR": return (v.columns || []).join(", ");
     default: return "";
   }
@@ -3185,8 +3195,8 @@ function chartStyle() {
 }
 
 function setChartHeading(kind, values) {
-  $("viz-kind").textContent = kind ? chartLabel() : "No chart yet";
-  $("viz-sub").textContent = kind ? chartSubtitle(kind, values) : "";
+  $("viz-kind").textContent = tr(kind ? chartLabel() : "No chart yet");
+  $("viz-sub").textContent = tr(kind ? chartSubtitle(kind, values) : "");
 }
 
 function showChartMessage(kind, text) {
@@ -3439,7 +3449,7 @@ $("page-next").addEventListener("click", () => {
 
 function syncThemeButton() {
   const dark = document.documentElement.dataset.theme === "dark";
-  $("theme-label").textContent = dark ? "Light mode" : "Dark mode";
+  $("theme-label").textContent = tr(dark ? "Light mode" : "Dark mode");
 }
 
 function setTheme(theme, persist) {
@@ -3626,11 +3636,11 @@ function reportTest() {
   if (!app.test) return;
   const r = app.test;
   const stats = [["p-value", pText(r.p)]];
-  if (r.effect && r.effect.value != null) stats.push([`${r.effect.name} (${r.effect.size})`, r.effect.value.toFixed(2)]);
+  if (r.effect && r.effect.value != null) stats.push([`${tr(r.effect.name)} (${tr(r.effect.size)})`, r.effect.value.toFixed(2)]);
   if (r.ci) stats.push([`95% CI · ${r.ci.label}`, `${fnum(r.ci.low)} … ${fnum(r.ci.high)}`]);
   stats.push(["Rows used", fmt(r.n)]);
-  addToReport({ type: "test", title: `${r.test}: ${r.question}`, sentence: r.interpretation, significant: r.significant,
-    stats, why: r.why, notes: r.caveats });
+  addToReport({ type: "test", title: `${tr(r.test)}: ${tr(r.question)}`, sentence: r.interpretation, significant: r.significant,
+    stats, why: r.why.map((w) => tr(`${w[0].toUpperCase()}${w.slice(1)}.`).replace(/\.$/, "")), notes: r.caveats });
 }
 
 /* ---- rendering a block as part of the document ---------------------- */
@@ -3682,7 +3692,7 @@ function reportBlockBody(b) {
         el("h3", { text: b.title }),
         el("div", { class: `r-callout ${b.significant ? "good" : ""}` }, el("p", { text: b.sentence })),
         el("div", { class: "r-stats" }, b.stats.map(([k, v]) => el("div", { class: "r-stat" }, el("b", { text: v }), el("span", { text: k })))),
-        b.why && b.why.length ? el("p", { class: "r-small", text: `Why this test: ${b.why.join("; ")}.` }) : null,
+        b.why && b.why.length ? el("p", { class: "r-small", text: trf("Why this test: {0}.", b.why.join("; ")), raw: true }) : null,
         notes);
     case "dashboard":
       if (b.rendered) {
@@ -3708,11 +3718,11 @@ function reportSources() {
 
 /** The finished document: what the export contains. */
 function reportDocument(blocks = app.report.blocks) {
-  const date = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+  const date = new Date().toLocaleDateString(i18n.lang === "ar" ? "ar-IQ" : "en-GB", { day: "numeric", month: "long", year: "numeric", numberingSystem: "latn" });
   const sources = reportSources();
   return el("article", { class: "report-doc" },
     el("h1", { text: app.report.title || "Data report" }),
-    el("p", { class: "r-meta", text: [`Created ${date} with Data Boss`, sources.length ? `Data: ${sources.join(", ")}` : null].filter(Boolean).join(" · ") }),
+    el("p", { class: "r-meta", text: sources.length ? trf("Created {0} with Data Boss · Data: {1}", date, sources.join(", ")) : trf("Created {0} with Data Boss", date), raw: true }),
     blocks
       .filter((b) => !((b.type === "text" || b.type === "heading") && !(b.text || "").trim()))
       .map((b) => el("section", { class: "r-block" }, reportBlockBody(b))),
@@ -3802,12 +3812,12 @@ $("btn-report-clear").addEventListener("click", (e) => {
   const btn = e.currentTarget;
   if (btn.dataset.armed !== "1") {
     btn.dataset.armed = "1";
-    btn.textContent = "Click again to clear";
-    setTimeout(() => { btn.dataset.armed = ""; btn.textContent = "Clear"; }, 3000);
+    btn.textContent = tr("Click again to clear");
+    setTimeout(() => { btn.dataset.armed = ""; btn.textContent = tr("Clear"); }, 3000);
     return;
   }
   btn.dataset.armed = "";
-  btn.textContent = "Clear";
+  btn.textContent = tr("Clear");
   app.report.blocks = [];
   saveReport();
   renderReport();
@@ -3894,8 +3904,8 @@ async function trainModel() {
     const res = await callLatest("model", "model", params);
     if (seq !== modelSeq) return;
     app.model = res;
-    $("model-title").textContent = res.task === "regression" ? `Predicting ${res.target} (regression)` : `Predicting ${res.target} (classification)`;
-    $("model-sub").textContent = `${fmt(res.trainRows)} training rows · ${fmt(res.testRows)} test rows · ${plural(res.features.length, "feature")}`;
+    $("model-title").textContent = tr(res.task === "regression" ? `Predicting ${res.target} (regression)` : `Predicting ${res.target} (classification)`);
+    $("model-sub").textContent = tr(`${fmt(res.trainRows)} training rows · ${fmt(res.testRows)} test rows · ${plural(res.features.length, "feature")}`);
     $("model-actions").hidden = false;
     out.replaceChildren(modelView(res));
   } catch (err) {
@@ -3926,7 +3936,7 @@ function scatterSvg(points, label) {
   const node = (tag, attrs, text) => {
     const n = document.createElementNS(ns, tag);
     for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
-    if (text != null) n.textContent = text;
+    if (text != null) n.textContent = tr(text);
     return n;
   };
   const svg = node("svg", { viewBox: `0 0 ${W} ${H}`, class: "trend-svg model-scatter", role: "img", "aria-label": `Predicted vs actual ${label}` });
@@ -4066,8 +4076,8 @@ async function findClusters() {
     const res = await callLatest("clusters", "clusters", { features, k: clusterValues.k ? Number(clusterValues.k) : null });
     if (seq !== clusterSeq) return;
     app.clusters = res;
-    $("cluster-title").textContent = `${res.k} clusters`;
-    $("cluster-sub").textContent = `${fmt(res.rows)} rows · ${plural(res.features.length, "column")}`;
+    $("cluster-title").textContent = tr(`${res.k} clusters`);
+    $("cluster-sub").textContent = tr(`${fmt(res.rows)} rows · ${plural(res.features.length, "column")}`);
     $("cluster-actions").hidden = false;
     out.replaceChildren(clusterView(res));
   } catch (err) {
@@ -4084,7 +4094,7 @@ async function findClusters() {
 function svgNode(tag, attrs, text) {
   const n = document.createElementNS("http://www.w3.org/2000/svg", tag);
   for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
-  if (text != null) n.textContent = text;
+  if (text != null) n.textContent = tr(text);
   return n;
 }
 
@@ -4232,8 +4242,8 @@ async function runForecast() {
     const res = await callLatest("forecast", "forecast", { params });
     if (seq !== forecastSeq) return;
     app.forecast = res;
-    $("forecast-title").textContent = `Forecast: ${res.label} per ${res.unit}`;
-    $("forecast-sub").textContent = res.method;
+    $("forecast-title").textContent = trf("Forecast: {0} per {1}", tr(res.label), tr(res.unit));
+    $("forecast-sub").textContent = tr(res.method);
     $("forecast-actions").hidden = false;
     out.replaceChildren(forecastView(res));
   } catch (err) {
@@ -4409,7 +4419,7 @@ function echartOption(spec, t) {
       return { ...base, legend: { ...base.legend, show: spec.series.length > 1 },
         tooltip: { ...base.tooltip, trigger: "axis", axisPointer: { type: "shadow" } },
         xAxis: { ...axis, type: "category", data: labels, name: spec.x, nameGap: 36, axisLabel: { color: t.muted, hideOverlap: true } },
-        yAxis: { ...axis, type: "value", name: "Count", nameGap: 44 },
+        yAxis: { ...axis, type: "value", name: tr("Count"), nameGap: 44 },
         dataZoom: zoom(["x"]),
         series: spec.series.map((sr, i) => ({ type: "bar", name: sr.name, data: sr.counts, barCategoryGap: "4%", barGap: "-100%",
           itemStyle: { opacity: spec.series.length > 1 ? 0.55 : 0.9 },
@@ -4455,13 +4465,13 @@ function echartOption(spec, t) {
         yAxis: { ...axis, type: "value", name: spec.y, nameGap: 50, scale: true },
         dataZoom: spec.points.length > 30 ? [{ type: "inside" }, { type: "slider", height: 18, bottom: 6, borderColor: t.border, textStyle: { color: t.muted } }] : [{ type: "inside" }],
         grid: { ...base.grid, bottom: spec.points.length > 30 ? 70 : 56 },
-        series: [{ type: "line", name: spec.how, data: spec.points.map((p) => p[1]), showSymbol: spec.points.length <= 60, smooth: false, lineStyle: { width: 2 } }] };
+        series: [{ type: "line", name: tr(spec.how), data: spec.points.map((p) => p[1]), showSymbol: spec.points.length <= 60, smooth: false, lineStyle: { width: 2 } }] };
     case "bar": {
       const pct = spec.percentOf;
       const label = { show: spec.labels.length <= 30, position: spec.horizontal ? "right" : "top", color: t.muted, fontSize: 11,
         formatter: (p) => (pct ? `${((p.value / pct) * 100).toFixed(0)}%` : fnum(p.value)) };
       const cat = { ...axis, type: "category", data: spec.labels, inverse: spec.horizontal, axisLabel: { color: t.muted, hideOverlap: !spec.horizontal, interval: spec.horizontal ? 0 : "auto", width: 140, overflow: "truncate" } };
-      const val = { ...axis, type: "value", name: spec.valueLabel, nameGap: spec.horizontal ? 30 : 50 };
+      const val = { ...axis, type: "value", name: tr(spec.valueLabel), nameGap: spec.horizontal ? 30 : 50 };
       return { ...base, legend: { show: false }, tooltip: { ...base.tooltip, trigger: "axis", axisPointer: { type: "shadow" },
           formatter: (ps) => { const p = ps[0]; return `${plain(p.name)}\n${plain(spec.valueLabel)}: ${fnum(p.value)}${pct ? ` (${((p.value / pct) * 100).toFixed(1)}%)` : ""}\n(click for options)`; } },
         grid: spec.horizontal ? { left: 150, right: 56, top: 20, bottom: 44 } : base.grid,
@@ -4638,7 +4648,7 @@ async function renderDashboard() {
   const grid = $("dash-grid");
   $("btn-dash-report").disabled = !tiles.length;
   const last = app.state.log.at(-1);
-  $("dash-updated").textContent = tiles.length ? (last ? `Data as of step ${last.step}: ${last.msg}` : "Original data") : "";
+  $("dash-updated").textContent = tr(tiles.length ? (last ? `Data as of step ${last.step}: ${last.msg}` : "Original data") : "");
   if (!tiles.length) {
     grid.replaceChildren(el("div", { class: "card report-empty dash-empty" },
       el("h2", { text: "Nothing pinned yet" }),
@@ -4738,3 +4748,29 @@ $("btn-dash-report").addEventListener("click", () => {
   addToReport({ type: "dashboard", title: "Dashboard" });
 });
 syncDashBadge();
+
+/* ---- interface language -------------------------------------------- */
+
+(function setupLanguageButton() {
+  const other = i18n.lang === "ar" ? { code: "en", name: "English" } : { code: "ar", name: "العربية" };
+  const label = $("lang-label");
+  label.textContent = other.name;
+  label.lang = other.code;
+  $("btn-lang").addEventListener("click", async () => {
+    try {
+      await window.api.setLanguage(other.code); // saved, then the window reloads in the new language
+    } catch (err) {
+      toast("error", cleanError(err));
+    }
+  });
+})();
+
+/** After a reload (e.g. a language switch) the engine still holds the data: show it again. */
+(async function restoreSession() {
+  try {
+    const snapshot = await window.api.call("state");
+    if (snapshot && snapshot.shape) onLoaded(snapshot);
+  } catch {
+    /* nothing loaded yet */
+  }
+})();
