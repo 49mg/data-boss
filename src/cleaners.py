@@ -175,7 +175,7 @@ class DataCleaner(BaseDataCleaner):
             raise ValueError(f"Unknown column: {column}.")
         ascending = ascending in (True, "true", "asc", "ascending")
         self.df = self.df.sort_values(column, ascending=ascending, na_position="last", kind="stable")
-        self.code = f"df = df.sort_values({column!r}, ascending={ascending}, na_position='last')"
+        self.code = f"df = df.sort_values({column!r}, ascending={ascending}, na_position='last', kind='stable')"
         return f"Sorted rows by {column} ({'ascending' if ascending else 'descending'})."
 
     # ---- missing values --------------------------------------------------
