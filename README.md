@@ -21,6 +21,8 @@
 | ![Statistical tests](docs/screenshots/tests.png) | ![Model](docs/screenshots/model.png) |
 | ![Dashboard](docs/screenshots/dashboard.png) | ![Arabic interface](docs/screenshots/arabic.png) |
 
+**Case studies** made with Data Boss: [what makes a top-rated gym in Baghdad](case-studies/01-baghdad-gyms), [two years of Washington bike sharing](case-studies/02-bike-sharing) and [an honest model of a bank's phone campaign](case-studies/03-bank-marketing).
+
 Under the hood: an Electron window talks to a bundled Python engine (pandas, DuckDB, scipy, scikit-learn, statsmodels, Matplotlib). See [CHANGELOG.md](CHANGELOG.md) for what changed in each version.
 
 ## Install
