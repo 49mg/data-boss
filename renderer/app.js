@@ -75,6 +75,7 @@ const SECTION_TITLES = {
   analyze: "Analyze",
   visualize: "Visualize",
   model: "Model",
+  dashboard: "Dashboard",
   report: "Report",
 };
 
@@ -413,6 +414,7 @@ function setState(snapshot) {
   app.inspectStale = true; // refreshed when the Inspect screen is shown
   app.query.infoStale = true;
   testGroupCache.clear();
+  app.dashStale = true; // redrawn now if visible, otherwise when the Dashboard is opened
   const tab = app.section === "analyze" ? app.analyzeTab || "pivot" : null;
   if (tab === "pivot") renderPivotFields();
   else app.pivotStale = true;
@@ -480,6 +482,7 @@ function showSection(name) {
   if (app.state && name === "inspect" && app.inspectStale) renderInspect();
   if (app.state && name === "visualize" && app.chartKind && app.chartStale) scheduleRender(0);
   if (app.state && name === "report") renderReport();
+  if (app.state && name === "dashboard" && app.dashStale !== false) renderDashboard();
   if (app.state && name === "model") selectModelTab(app.modelTab || "predict");
   if (app.state && name === "query" && app.query.infoStale) loadQueryInfo();
   if (app.state && name === "analyze") {
@@ -3530,7 +3533,7 @@ renderOpList();
 /* ------------------------------------------------------------------ */
 
 const REPORT_KEY = "databoss.report.v1";
-const REPORT_LABELS = { heading: "Heading", text: "Text note", chart: "Chart", table: "Table", trend: "Trend", test: "Test result", insights: "Findings" };
+const REPORT_LABELS = { dashboard: "Dashboard", heading: "Heading", text: "Text note", chart: "Chart", table: "Table", trend: "Trend", test: "Test result", insights: "Findings" };
 
 function loadReport() {
   try {
@@ -3681,6 +3684,13 @@ function reportBlockBody(b) {
         el("div", { class: "r-stats" }, b.stats.map(([k, v]) => el("div", { class: "r-stat" }, el("b", { text: v }), el("span", { text: k })))),
         b.why && b.why.length ? el("p", { class: "r-small", text: `Why this test: ${b.why.join("; ")}.` }) : null,
         notes);
+    case "dashboard":
+      if (b.rendered) {
+        return el("div", {}, el("h2", { text: b.title || "Dashboard" }),
+          b.rendered.map((r) => el("div", { class: "r-block" }, reportBlockBody(r))));
+      }
+      return el("div", {}, el("h3", { text: b.title || "Dashboard" }),
+        el("p", { class: "r-small", text: `The ${plural(app.dashboard.tiles.length, "pinned tile")} on the Dashboard, drawn from the data as it is when you export.` }));
     case "insights":
       return el("div", {},
         el("h3", { text: b.title }),
@@ -3697,13 +3707,13 @@ function reportSources() {
 }
 
 /** The finished document: what the export contains. */
-function reportDocument() {
+function reportDocument(blocks = app.report.blocks) {
   const date = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
   const sources = reportSources();
   return el("article", { class: "report-doc" },
     el("h1", { text: app.report.title || "Data report" }),
     el("p", { class: "r-meta", text: [`Created ${date} with Data Boss`, sources.length ? `Data: ${sources.join(", ")}` : null].filter(Boolean).join(" · ") }),
-    app.report.blocks
+    blocks
       .filter((b) => !((b.type === "text" || b.type === "heading") && !(b.text || "").trim()))
       .map((b) => el("section", { class: "r-block" }, reportBlockBody(b))),
     el("p", { class: "r-footer", text: "Statistics are computed from the data as loaded and cleaned in Data Boss. Associations and differences describe this data; they do not by themselves show cause." }));
@@ -3769,7 +3779,12 @@ function renderReport() {
 async function exportReport(format, testPath) {
   if (!app.report.blocks.length) return null;
   try {
-    const res = await window.api.exportReport(reportDocument().outerHTML, app.report.title || "Data report", format, testPath);
+    let blocks = app.report.blocks;
+    if (blocks.some((b) => b.type === "dashboard")) {
+      const rendered = await dashboardForReport();
+      blocks = blocks.map((b) => (b.type === "dashboard" ? { ...b, rendered } : b));
+    }
+    const res = await window.api.exportReport(reportDocument(blocks).outerHTML, app.report.title || "Data report", format, testPath);
     if (res) toast("success", `Report saved to ${res.path}`);
     return res;
   } catch (err) {
@@ -4553,3 +4568,173 @@ function onChartClick(spec, p) {
 }
 
 for (const b of document.querySelectorAll("#chart-mode button")) b.addEventListener("click", () => setChartMode(b.dataset.mode));
+
+/* ------------------------------------------------------------------ */
+/* dashboard                                                            */
+/* ------------------------------------------------------------------ */
+
+const DASH_KEY = "databoss.dashboard.v1";
+
+function loadDashboard() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(DASH_KEY) || "null");
+    if (saved && Array.isArray(saved.tiles)) return saved;
+  } catch { /* start empty */ }
+  return { tiles: [] };
+}
+function saveDashboard() {
+  try { localStorage.setItem(DASH_KEY, JSON.stringify(app.dashboard)); } catch { /* not critical */ }
+}
+app.dashboard = loadDashboard();
+app.dashCharts = [];
+let dashSeq = 0;
+
+function syncDashBadge() {
+  const n = app.dashboard.tiles.length;
+  $("nav-dash-badge").hidden = !n;
+  $("nav-dash-badge").textContent = String(n);
+}
+
+function pinTile(tile) {
+  app.dashboard.tiles.push({ id: `t${Date.now()}${Math.floor(Math.random() * 1000)}`, ...tile });
+  saveDashboard();
+  syncDashBadge();
+  app.dashStale = true;
+  toast("success", `Pinned to the dashboard (${plural(app.dashboard.tiles.length, "tile")}).`);
+}
+
+function pinChart() {
+  if (!app.chartKind || !app.chartParams) return;
+  pinTile({ type: "chart", kind: app.chartKind, params: app.chartParams, title: `${chartLabel()}: ${chartSubtitle(app.chartKind, chartValues)}` });
+}
+
+function pinPivot() {
+  if (!app.pivot) return;
+  pinTile({ type: "pivot", params: app.pivot.params, title: `Pivot: ${pivotSubtitle(app.pivot.params)}` });
+}
+
+function disposeDashCharts() {
+  for (const c of app.dashCharts) c.dispose();
+  app.dashCharts = [];
+}
+
+function moveTile(i, delta) {
+  const t = app.dashboard.tiles;
+  const j = i + delta;
+  if (j < 0 || j >= t.length) return;
+  [t[i], t[j]] = [t[j], t[i]];
+  saveDashboard();
+  renderDashboard();
+}
+
+/** Draw every tile from the current data. Tiles render one after another on the worker. */
+async function renderDashboard() {
+  if (!app.state) return;
+  const seq = ++dashSeq;
+  app.dashStale = false;
+  syncDashBadge();
+  disposeDashCharts();
+  const tiles = app.dashboard.tiles;
+  const grid = $("dash-grid");
+  $("btn-dash-report").disabled = !tiles.length;
+  const last = app.state.log.at(-1);
+  $("dash-updated").textContent = tiles.length ? (last ? `Data as of step ${last.step}: ${last.msg}` : "Original data") : "";
+  if (!tiles.length) {
+    grid.replaceChildren(el("div", { class: "card report-empty dash-empty" },
+      el("h2", { text: "Nothing pinned yet" }),
+      el("p", { class: "card-hint", text: "Use Pin on a chart in Visualize or on a pivot table in Analyze. Pinned items stay here and redraw from the current data after every cleaning step, undo or new query." })));
+    return;
+  }
+  const bodies = tiles.map(() => el("div", { class: "dash-body" }, el("div", { class: "inline-loading" }, el("span", { class: "impact-dot pulse" }), "Drawing…")));
+  grid.replaceChildren(...tiles.map((t, i) =>
+    el("div", { class: `card dash-tile ${t.type === "pivot" ? "dash-pivot" : ""}`, "data-type": t.type },
+      el("div", { class: "dash-head" },
+        el("strong", { class: "dash-title", text: t.title, title: t.title }),
+        el("button", { class: "icon-btn", title: "Move earlier", "aria-label": "Move earlier", disabled: i === 0, onclick: () => moveTile(i, -1) }, icon("i-up")),
+        el("button", { class: "icon-btn", title: "Move later", "aria-label": "Move later", disabled: i === tiles.length - 1, onclick: () => moveTile(i, 1) }, icon("i-down")),
+        el("button", { class: "icon-btn", title: "Open to edit", "aria-label": "Open to edit", onclick: () => openTile(t) }, icon("i-play")),
+        el("button", { class: "icon-btn", title: "Unpin", "aria-label": "Unpin", onclick: () => {
+          tiles.splice(i, 1);
+          saveDashboard();
+          renderDashboard();
+        } }, icon("i-x"))),
+      bodies[i])));
+  for (let i = 0; i < tiles.length; i++) {
+    if (seq !== dashSeq) return;
+    const t = tiles[i];
+    try {
+      if (t.type === "chart") {
+        const res = await window.api.call("plot", { kind: t.kind, params: t.params, style: chartStyle(), width: 640 });
+        if (seq !== dashSeq) return;
+        const box = el("div", { class: "echart dash-chart" });
+        bodies[i].replaceChildren(box);
+        if (res.spec && typeof echarts !== "undefined") {
+          const chart = echarts.init(box, null, { renderer: "canvas" });
+          chart.setOption(echartOption(res.spec, chartStyle()));
+          app.dashCharts.push(chart);
+        } else {
+          box.replaceChildren(el("img", { src: res.image, alt: t.title }));
+        }
+        if (res.insights.length) bodies[i].append(el("p", { class: "dash-insight", text: res.insights[0] }));
+      } else {
+        const res = await window.api.call("pivot", { params: t.params });
+        if (seq !== dashSeq) return;
+        bodies[i].replaceChildren(pivotTable(res));
+      }
+    } catch (err) {
+      if (seq !== dashSeq) return;
+      bodies[i].replaceChildren(note("warn", `Can't draw this with the current data: ${cleanError(err)}`));
+    }
+  }
+}
+
+function openTile(t) {
+  if (t.type === "chart") {
+    showSection("visualize");
+    selectChart(t.kind, chartFormFromParams(t.kind, t.params));
+  } else {
+    app.forms.pivot = { rows: t.params.rows, columns: t.params.columns || "", values: t.params.values || "", agg: t.params.agg,
+      percent: t.params.percent, sort: t.params.sort, totals: t.params.totals };
+    showSection("analyze");
+    selectAnalyzeTab("pivot");
+    renderPivotFields(true);
+  }
+}
+
+/** Chart form values from saved chart params (the form uses strings for some fields). */
+function chartFormFromParams(kind, params) {
+  const out = {};
+  for (const [k, v] of Object.entries(params || {})) out[k] = typeof v === "number" ? String(v) : v;
+  return out;
+}
+
+const dashResize = new ResizeObserver(() => app.dashCharts.forEach((c) => c.resize()));
+dashResize.observe($("dash-grid"));
+
+/** Fresh light-theme images/tables of every tile, for a report export. */
+async function dashboardForReport() {
+  const out = [];
+  for (const t of app.dashboard.tiles) {
+    try {
+      if (t.type === "chart") {
+        const res = await window.api.call("plot", { kind: t.kind, params: t.params, style: lightChartStyle(), width: 900 });
+        out.push({ type: "chart", title: t.title, image: res.image, insights: res.insights.slice(0, 2), notes: [] });
+      } else {
+        const res = await window.api.call("pivot", { params: t.params });
+        out.push({ type: "table", title: t.title, table: { columns: res.table.columns, data: res.table.data.slice(0, 200) },
+          truncated: res.table.data.length > 200, percent: res.percent, valueColumns: res.valueColumns, notes: res.notes });
+      }
+    } catch (err) {
+      out.push({ type: "text", text: `${t.title}: can't be drawn with the current data (${cleanError(err)}).` });
+    }
+  }
+  return out;
+}
+
+$("btn-pin-chart").addEventListener("click", pinChart);
+$("btn-pin-pivot").addEventListener("click", pinPivot);
+$("btn-dash-report").addEventListener("click", () => {
+  if (!app.dashboard.tiles.length) return;
+  addToReport({ type: "dashboard", title: "Dashboard" });
+});
+syncDashBadge();

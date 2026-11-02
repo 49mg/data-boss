@@ -27,6 +27,8 @@
         <symbol id="i-theme" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16Z" class="fill"/></symbol>
         <symbol id="i-report" viewBox="0 0 24 24"><path d="M6.5 3.5h11v17h-11z"/><path d="M9 16.5v-3M12 16.5v-6M15 16.5v-4.5M9 7h6"/></symbol>
         <symbol id="i-model" viewBox="0 0 24 24"><circle cx="6" cy="7" r="2"/><circle cx="6" cy="17" r="2"/><circle cx="18" cy="12" r="2"/><path d="M8 7.8 16 11M8 16.2 16 13"/></symbol>
+        <symbol id="i-dash" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="9" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="5" rx="1.5"/><rect x="13.5" y="11.5" width="7" height="9" rx="1.5"/><rect x="3.5" y="15.5" width="7" height="5" rx="1.5"/></symbol>
+        <symbol id="i-pin" viewBox="0 0 24 24"><path d="M9 3.5h6l-1 6 3.5 3.5h-11L10 9.5l-1-6ZM12 13v7.5"/></symbol>
         <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
         <symbol id="i-up" viewBox="0 0 24 24"><path d="m6 14 6-6 6 6"/></symbol>
         <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 10 6 6 6-6"/></symbol>
@@ -87,6 +89,10 @@
           </button>
           <button data-section="visualize" class="nav-item">
             <svg class="icon"><use href="#i-chart"/></svg><span>Visualize</span>
+          </button>
+          <button data-section="dashboard" class="nav-item">
+            <svg class="icon"><use href="#i-dash"/></svg><span>Dashboard</span>
+            <span class="nav-badge" id="nav-dash-badge" hidden></span>
           </button>
           <button data-section="report" class="nav-item">
             <svg class="icon"><use href="#i-report"/></svg><span>Report</span>
@@ -373,7 +379,7 @@
                     </div>
                     <div class="viz-actions" id="pivot-actions" hidden>
                       <button id="btn-pivot-chart" class="btn btn-sm"><svg class="icon"><use href="#i-chart"/></svg>Chart</button>
-                      <button id="btn-report-pivot" class="btn btn-sm" title="Add to the report"><svg class="icon"><use href="#i-report"/></svg>Report</button>
+                      <button id="btn-pin-pivot" class="btn btn-sm" title="Pin to the dashboard"><svg class="icon"><use href="#i-pin"/></svg>Pin</button><button id="btn-report-pivot" class="btn btn-sm" title="Add to the report"><svg class="icon"><use href="#i-report"/></svg>Report</button>
                       <button id="btn-pivot-code" class="btn btn-sm"><svg class="icon"><use href="#i-code"/></svg>Code</button>
                       <button id="btn-pivot-save" class="btn btn-sm" title="Replace the working data with this table, without the Total row (undoable)"><svg class="icon"><use href="#i-clean"/></svg>Save as dataset</button>
                     </div>
@@ -544,6 +550,20 @@
             </div>
           </section>
 
+          <section id="section-dashboard" class="section section-wide" hidden>
+            <div class="page-head page-head-row">
+              <div>
+                <h1>Dashboard</h1>
+                <p>Charts and pivot tables you pinned, redrawn from the current data after every cleaning step.</p>
+              </div>
+              <div class="report-buttons" id="dash-buttons">
+                <span class="muted dash-updated" id="dash-updated"></span>
+                <button id="btn-dash-report" class="btn btn-sm"><svg class="icon"><use href="#i-report"/></svg>Add to report</button>
+              </div>
+            </div>
+            <div id="dash-grid" class="dash-grid"></div>
+          </section>
+
           <section id="section-report" class="section" hidden>
             <div class="page-head">
               <h1>Report</h1>
@@ -599,7 +619,7 @@
                       <button id="btn-save-svg" class="btn btn-sm" title="Save as SVG (scalable, for print)">
                         <svg class="icon"><use href="#i-download"/></svg>SVG
                       </button>
-<button id="btn-report-chart" class="btn btn-sm" title="Add to the report"><svg class="icon"><use href="#i-report"/></svg>Report</button>
+<button id="btn-pin-chart" class="btn btn-sm" title="Pin to the dashboard"><svg class="icon"><use href="#i-pin"/></svg>Pin</button><button id="btn-report-chart" class="btn btn-sm" title="Add to the report"><svg class="icon"><use href="#i-report"/></svg>Report</button>
                       <button id="btn-chart-notebook" class="btn btn-sm" title="Jupyter notebook with the cleaning steps and your recent charts">
                         <svg class="icon"><use href="#i-file"/></svg>Notebook
                       </button>

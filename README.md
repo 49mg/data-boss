@@ -73,6 +73,10 @@ The **Forecast** tab projects a value per day, week, month, quarter or year with
 
 Charts in Visualize are interactive (Apache ECharts, bundled locally, no internet needed): hover for exact values, scroll or drag to zoom, and click a bar, box or histogram range to **keep only those rows** or **compare them with the rest**. Clicking a correlation cell opens the scatter plot of that pair. The **Image** view shows the exact Matplotlib image that PNG, SVG, copy, reports and the exported code use.
 
+### Dashboard
+
+**Pin** any chart (Visualize) or pivot table (Analyze) to the Dashboard. Tiles are redrawn from the current data after every cleaning step, undo or applied query, so the dashboard always shows the data as it is now; a tile that no longer fits (e.g. its column was dropped) says why. Reorder or unpin tiles, open one to edit it, and **Add to report** to include the dashboard, rendered fresh at export time.
+
 ### Report
 
 Every chart, pivot table, trend, segment comparison and test result has a **Report** button. The Report screen collects them with your own headings and notes; reorder or remove items, then **Export HTML** (one self-contained file with images inlined, opens offline in any browser) or **Export PDF**. Charts in the report are always drawn in light colours so they print well, and the report is kept between sessions.

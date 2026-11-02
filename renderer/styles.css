@@ -1246,6 +1246,21 @@ circle.cl { fill: var(--cl); fill-opacity: 0.7; }
 .chart-actions .icon-btn { position: absolute; top: 8px; right: 8px; width: 24px; height: 24px; }
 #chart-mode { margin-right: 6px; }
 
+/* dashboard */
+.page-head-row { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
+.dash-updated { font-size: 12px; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dash-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 520px), 1fr)); gap: 16px; align-items: start; }
+.dash-tile { margin: 0; padding: 12px 14px 14px; min-width: 0; }
+.dash-empty { grid-column: 1 / -1; }
+.dash-head { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.dash-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.dash-head .icon-btn { width: 28px; height: 28px; }
+.dash-chart { height: 320px; min-height: 0; }
+.dash-body img { width: 100%; height: auto; }
+.dash-insight { margin: 6px 2px 0; font-size: 12.5px; color: var(--muted); }
+.dash-pivot .table-wrap { max-height: 360px; }
+.dash-body .inline-loading { min-height: 120px; }
+
 /* report builder */
 #section-report { max-width: 960px; }
 .report-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px 18px; }
