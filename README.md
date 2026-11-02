@@ -67,6 +67,8 @@ Pick a column to predict and the columns to learn from; the task (regression or 
 
 The **Clusters** tab groups similar rows with k-means: it tries 2–8 clusters, picks the count with the best silhouette score (or uses yours), describes each cluster in plain words (e.g. “Cluster 3: mostly plan = pro, very high fee, high visits”), shows the rows on a 2-D map, and **Add as column** stores each row's cluster as an undoable cleaning step. Results are reproducible (fixed seed, Cluster 1 is always the largest).
 
+The **Forecast** tab projects a value per day, week, month, quarter or year with exponential smoothing (Holt-Winters, statsmodels): with or without a damped trend and seasonality, chosen by AICc. It shows 80% and 95% ranges, the seasonal high and low points, and a **backtest** that hides the last periods, forecasts them, and compares the error with a simple “same as last season” benchmark, so you can see how far to trust it. An incomplete last period is left out instead of looking like a collapse.
+
 ### Report
 
 Every chart, pivot table, trend, segment comparison and test result has a **Report** button. The Report screen collects them with your own headings and notes; reorder or remove items, then **Export HTML** (one self-contained file with images inlined, opens offline in any browser) or **Export PDF**. Charts in the report are always drawn in light colours so they print well, and the report is kept between sessions.
@@ -160,6 +162,7 @@ data-boss/
 │   ├── inspectors.py       # DataInspector — read-only data summaries
 │   ├── target.py           # Target analysis: rank columns by relationship to one column
 │   ├── clusters.py         # k-means clustering with plain-language cluster profiles
+│   ├── forecast.py         # Exponential smoothing forecasts with a backtest
 │   ├── model.py            # Model builder: baseline, linear and random forest with honest evaluation
 │   ├── notebook.py         # Writes Jupyter notebooks (.ipynb) without extra dependencies
 │   ├── segments.py         # Segment vs rest comparison on every column

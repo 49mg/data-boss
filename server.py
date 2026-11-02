@@ -32,6 +32,7 @@ from src import notebook as nb
 from src.analysis import pivot
 from src.clusters import clusters
 from src.files import FileFormatError, excel_sheets, read_table, write_table
+from src.forecast import forecast
 from src.inspectors import _label
 from src.model import train_models
 from src.query import example_queries, quote_ident, run_query, run_query_full, sql_code
@@ -531,6 +532,11 @@ class Session:
                                  "print(df['cluster'].value_counts())", ""])
         return jsonable(res)
 
+    def cmd_forecast(self, params):
+        res = forecast(self.require_df(), **params)
+        res["code"] = "\n".join(["import numpy as np", "import pandas as pd", "", *self._data_code(), "", res["code"], ""])
+        return jsonable(res)
+
     # ---- segment comparison --------------------------------------------------
 
     def cmd_segment(self, conditions):
@@ -596,7 +602,7 @@ class Session:
 # responsive and they can be cancelled. Everything else is answered inline.
 HEAVY_COMMANDS = {
     "plot", "preview", "inspect", "query", "query_chart", "pivot", "pivot_chart", "stats_test", "trends", "segment", "notebook",
-    "model", "clusters",
+    "model", "clusters", "forecast",
 }
 
 

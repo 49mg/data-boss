@@ -470,6 +470,7 @@
             <div class="segmented" id="model-tabs" role="tablist" aria-label="Model">
               <button role="tab" aria-selected="true" data-tab="predict">Predict</button>
               <button role="tab" aria-selected="false" data-tab="clusters">Clusters</button>
+              <button role="tab" aria-selected="false" data-tab="forecast">Forecast</button>
             </div>
             <div class="viz-layout" id="model-predict">
               <aside class="card viz-config">
@@ -491,6 +492,29 @@
                     </div>
                   </div>
                   <div id="model-output" class="test-output"></div>
+                </div>
+              </div>
+            </div>
+            <div class="viz-layout" id="model-forecast" hidden>
+              <aside class="card viz-config">
+                <div class="viz-label">Forecast a value over time</div>
+                <div id="forecast-fields" class="fields fields-stack"></div>
+                <button id="btn-forecast" class="btn btn-primary btn-block"><svg class="icon"><use href="#i-play"/></svg>Forecast</button>
+                <p class="test-help">Exponential smoothing (Holt-Winters). The last periods are held back first to show how wrong it would have been.</p>
+              </aside>
+              <div class="viz-main">
+                <div class="card card-flush">
+                  <div class="viz-toolbar">
+                    <div class="viz-heading">
+                      <div class="viz-kind" id="forecast-title">Forecast</div>
+                      <div class="viz-sub" id="forecast-sub"></div>
+                    </div>
+                    <div class="viz-actions" id="forecast-actions" hidden>
+                      <button id="btn-report-forecast" class="btn btn-sm" title="Add to the report"><svg class="icon"><use href="#i-report"/></svg>Report</button>
+                      <button id="btn-forecast-code" class="btn btn-sm"><svg class="icon"><use href="#i-code"/></svg>Code</button>
+                    </div>
+                  </div>
+                  <div id="forecast-output" class="test-output"></div>
                 </div>
               </div>
             </div>

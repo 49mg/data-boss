@@ -528,6 +528,9 @@ function onLoaded(snapshot) {
   app.clusters = null;
   $("cluster-output").replaceChildren();
   $("cluster-actions").hidden = true;
+  app.forecast = null;
+  $("forecast-output").replaceChildren();
+  $("forecast-actions").hidden = true;
   $("segment-output").replaceChildren();
   $("trend-output").replaceChildren();
   $("test-output").replaceChildren();
@@ -4008,10 +4011,10 @@ let clusterSeq = 0;
 function selectModelTab(tab) {
   app.modelTab = tab;
   for (const b of document.querySelectorAll("#model-tabs button")) b.setAttribute("aria-selected", String(b.dataset.tab === tab));
-  $("model-predict").hidden = tab !== "predict";
-  $("model-clusters").hidden = tab !== "clusters";
+  for (const t of ["predict", "clusters", "forecast"]) $(`model-${t}`).hidden = tab !== t;
   if (!app.state) return;
   if (tab === "clusters") renderClusterFields();
+  else if (tab === "forecast") renderForecastFields();
   else renderModelFields();
 }
 
@@ -4157,3 +4160,156 @@ $("btn-cluster-apply").addEventListener("click", applyClusters);
 $("btn-report-cluster").addEventListener("click", reportClusters);
 $("btn-cluster-code").addEventListener("click", () => app.clusters &&
   openCodeDialog("Clusters as scikit-learn code", "Rebuilds your data and the same cluster numbers (fixed seed).", app.clusters.code, "clusters.py"));
+
+/* ---- forecasting ------------------------------------------------------ */
+
+let forecastValues = {};
+let forecastSeq = 0;
+
+function renderForecastFields() {
+  const dates = datetimeCols();
+  if (!dates.length) {
+    $("forecast-fields").replaceChildren(el("p", { class: "muted no-inputs", text: "No date columns yet. Use Convert to date in Clean first." }),
+      el("button", { class: "btn btn-sm", onclick: () => openFix({ method: "TO_DATETIME", label: "Convert to date" }) },
+        icon("i-clean"), "Convert to date…"));
+    $("btn-forecast").disabled = true;
+    return;
+  }
+  $("btn-forecast").disabled = false;
+  const memory = (app.forms.forecast ||= {});
+  const specs = [
+    { key: "date", label: "Date column", type: "select", options: dates },
+    { key: "value", label: "Value", type: "select", rerender: true,
+      options: [{ value: "", label: "Number of rows" }, ...numericCols()], default: numericCols()[0] || "" },
+  ];
+  if (memory.value) {
+    specs.push({ key: "agg", label: "Combine with", type: "select", default: "sum",
+      options: toOptions([["sum", "Sum"], ["mean", "Mean"], ["median", "Median"], ["count", "Count (non-empty)"]]) });
+  }
+  specs.push(
+    { key: "freq", label: "Period", type: "select", default: "M",
+      options: toOptions([["D", "Day"], ["W", "Week"], ["M", "Month"], ["Q", "Quarter"], ["Y", "Year"]]) },
+    { key: "horizon", label: "Forecast ahead", type: "select",
+      options: toOptions([["", "Automatic (one season)"], ["3", "3 periods"], ["6", "6 periods"], ["12", "12 periods"], ["24", "24 periods"]]) },
+  );
+  forecastValues = buildForm($("forecast-fields"), specs, memory, (values, key) => {
+    forecastValues = values;
+    if (key === "value") renderForecastFields();
+  });
+}
+
+async function runForecast() {
+  if (!app.state || !forecastValues.date) return;
+  const v = forecastValues;
+  const params = { date: v.date, value: v.value || null, agg: v.value ? v.agg || "sum" : "count", freq: v.freq || "M",
+    horizon: v.horizon ? Number(v.horizon) : null };
+  const seq = ++forecastSeq;
+  const out = $("forecast-output");
+  const loading = el("div", { class: "inline-loading" }, el("span", { class: "impact-dot pulse" }), "Fitting and backtesting…");
+  out.replaceChildren(loading);
+  $("btn-forecast").disabled = true;
+  const hideCancel = delayedCancel(loading, "forecast", () => seq === forecastSeq && out.replaceChildren(note("info", "Cancelled.")));
+  try {
+    const res = await callLatest("forecast", "forecast", { params });
+    if (seq !== forecastSeq) return;
+    app.forecast = res;
+    $("forecast-title").textContent = `Forecast: ${res.label} per ${res.unit}`;
+    $("forecast-sub").textContent = res.method;
+    $("forecast-actions").hidden = false;
+    out.replaceChildren(forecastView(res));
+  } catch (err) {
+    if (seq !== forecastSeq || isCancelled(err)) return;
+    app.forecast = null;
+    $("forecast-actions").hidden = true;
+    out.replaceChildren(note("warn", cleanError(err)));
+  } finally {
+    hideCancel();
+    $("btn-forecast").disabled = false;
+  }
+}
+
+function forecastChart(res) {
+  const W = 800, H = 260, L = 60, R = 12, T = 12, B = 30;
+  const hist = res.history, fc = res.forecast;
+  const keep = Math.min(hist.values.length, Math.max(24, fc.values.length * 3));
+  const hv = hist.values.slice(-keep), hp = hist.periods.slice(-keep);
+  const periods = [...hp, ...fc.periods];
+  const n = periods.length;
+  const bt = res.backtest;
+  const all = [...hv, ...fc.low95, ...fc.high95, ...(bt ? bt.predicted : [])].filter((v) => v != null);
+  let lo = Math.min(...all), hi = Math.max(...all);
+  if (hi === lo) hi = lo + 1;
+  const x = (i) => L + (i / Math.max(1, n - 1)) * (W - L - R);
+  const y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+  const svg = svgNode("svg", { viewBox: `0 0 ${W} ${H}`, class: "trend-svg", role: "img", "aria-label": "History and forecast" });
+  for (let k = 0; k <= 4; k++) {
+    const v = lo + ((hi - lo) * k) / 4;
+    svg.append(svgNode("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: "trend-grid" }),
+      svgNode("text", { x: L - 8, y: y(v) + 4, class: "trend-axis", "text-anchor": "end" }, fnum(v)));
+  }
+  const start = hv.length;
+  const area = (lowKey, highKey, cls) => {
+    const top = fc[highKey].map((v, i) => `${x(start + i)},${y(v)}`);
+    const bottom = fc[lowKey].map((v, i) => `${x(start + i)},${y(v)}`).reverse();
+    const join = `${x(start - 1)},${y(hv[hv.length - 1])}`;
+    svg.append(svgNode("polygon", { points: [join, ...top, ...bottom].join(" "), class: cls }));
+  };
+  area("low95", "high95", "fc-band95");
+  area("low80", "high80", "fc-band80");
+  svg.append(svgNode("line", { x1: x(start - 0.5), x2: x(start - 0.5), y1: T, y2: H - B, class: "fc-split" }));
+  if (bt) {
+    const off = hv.length - bt.predicted.length;
+    svg.append(svgNode("polyline", { points: bt.predicted.map((v, i) => `${x(off + i)},${y(v)}`).join(" "), class: "fc-backtest" }));
+  }
+  svg.append(svgNode("polyline", { points: hv.map((v, i) => `${x(i)},${y(v)}`).join(" "), class: "trend-line" }));
+  svg.append(svgNode("polyline", { points: [`${x(start - 1)},${y(hv[hv.length - 1])}`, ...fc.values.map((v, i) => `${x(start + i)},${y(v)}`)].join(" "), class: "fc-line" }));
+  for (const i of [0, start - 1, n - 1]) {
+    svg.append(svgNode("text", { x: x(i), y: H - 8, class: "trend-axis", "text-anchor": i === 0 ? "start" : i === n - 1 ? "end" : "middle" }, periods[i]));
+  }
+  return svg;
+}
+
+function forecastView(res) {
+  const bt = res.backtest;
+  const trust = bt && bt.beatsNaive;
+  const verdict = el("div", { class: `test-verdict ${trust ? "found" : "none"}` },
+    el("div", { class: "test-verdict-label", text: bt ? (trust ? "Forecast beat the simple benchmark in the backtest" : "Use with care: no better than a simple benchmark") : "No backtest possible" }),
+    el("ul", { class: "fc-insights" }, res.insights.map((t) => el("li", { text: t }))));
+  const legend = el("div", { class: "trend-legend muted" },
+    el("span", { class: "trend-key value" }), "history", el("span", { class: "trend-key fc-key" }), "forecast",
+    el("span", { class: "trend-key band-key" }), "80% / 95% range",
+    bt ? el("span", { class: "trend-key bt-key" }) : null, bt ? "backtest forecast" : null);
+  const chart = el("div", { class: "trend-chart" }, forecastChart(res), legend);
+  const f = res.forecast;
+  const table = el("div", { class: "table-wrap trend-table" },
+    el("table", { class: "test-table" },
+      el("thead", {}, el("tr", {}, ["Period", "Forecast", "80% range", "95% range"].map((h, i) => el("th", { text: h, class: i ? "num" : null })))),
+      el("tbody", {}, f.periods.map((p, i) => el("tr", {},
+        el("td", { text: p }), el("td", { class: "num", text: fnum(f.values[i]) }),
+        el("td", { class: "num muted", text: `${fnum(f.low80[i])} … ${fnum(f.high80[i])}` }),
+        el("td", { class: "num muted", text: `${fnum(f.low95[i])} … ${fnum(f.high95[i])}` }))))));
+  const backtest = bt
+    ? el("div", { class: "card" }, el("h2", { text: "Backtest: how wrong would it have been?" }),
+      el("p", { class: "card-hint", text: `The model was refitted without the last ${bt.periods.length} ${res.unit}s and asked to forecast them.` }),
+      el("div", { class: "stats" },
+        stat("Model error (MAE)", fnum(bt.mae), bt.mape != null ? `${bt.mape.toFixed(1)}% of the actual values on average` : "average absolute error",
+          bt.beatsNaive ? "good" : "warn"),
+        stat("Simple benchmark", fnum(bt.naiveMae), `error of “${bt.naive}”`)))
+    : null;
+  const notes = res.notes.length ? el("div", { class: "chart-footnotes" }, res.notes.map((t) => el("p", { text: t }))) : null;
+  return el("div", { class: "test-body" }, verdict, chart, backtest, table, notes);
+}
+
+function reportForecast() {
+  if (!app.forecast) return;
+  const r = app.forecast;
+  const f = r.forecast;
+  addToReport({ type: "table", title: `Forecast: ${r.label} per ${r.unit} (${r.method.toLowerCase()})`,
+    table: { columns: ["Period", "Forecast", "Low (80%)", "High (80%)"], data: f.periods.map((p, i) => [p, f.values[i], f.low80[i], f.high80[i]]) },
+    notes: [...r.insights, ...r.notes] });
+}
+
+$("btn-forecast").addEventListener("click", runForecast);
+$("btn-report-forecast").addEventListener("click", reportForecast);
+$("btn-forecast-code").addEventListener("click", () => app.forecast &&
+  openCodeDialog("Forecast as statsmodels code", "Rebuilds the period series, fits the same model and prints the forecast and backtest error.", app.forecast.code, "forecast.py"));
