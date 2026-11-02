@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 
 from .analysis import pivot
@@ -69,6 +70,11 @@ class DataCleaner(BaseDataCleaner):
             "ADD_COLUMN": self.add_column,
             "DATE_PARTS": self.date_parts,
             "JOIN": self.join,
+            "ONE_HOT": self.one_hot,
+            "SCALE": self.scale,
+            "BIN": self.bin_values,
+            "LOG_TRANSFORM": self.log_transform,
+            "GROUP_RARE": self.group_rare,
         }
         self.preview_override = None  # set by operations that need their own preview (joins)
 
@@ -518,6 +524,197 @@ class DataCleaner(BaseDataCleaner):
         self.df = self.df.drop(columns=columns)
         self.code = f"df = df.drop(columns={list(columns)!r})"
         return f"Dropped {len(columns)} column(s): {', '.join(map(str, columns))}."
+
+    # ---- feature engineering ------------------------------------------------
+
+    MAX_ONE_HOT = 50
+
+    @staticmethod
+    def _number(value, what, integer=False, minimum=None):
+        try:
+            v = int(str(value).strip()) if integer else float(str(value).strip())
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"{what} must be a {'whole ' if integer else ''}number.") from e
+        if minimum is not None and v < minimum:
+            raise ValueError(f"{what} must be at least {minimum}.")
+        return v
+
+    def _target_names(self, cols, suffix, keep_original):
+        """Where transformed values go: in place, or new <col><suffix> columns."""
+        if not keep_original:
+            return {c: c for c in cols}
+        names = {c: f"{c}{suffix}" for c in cols}
+        clash = [n for n in names.values() if n in self.df.columns]
+        if clash:
+            raise ValueError(f"Column(s) already exist: {', '.join(clash)}. Rename or drop them first.")
+        return names
+
+    def one_hot(self, columns, drop_first=False, keep_original=False):
+        """Indicator (0/1) columns for each category: <col>_<value>."""
+        cols = self._require(columns)
+        for c in cols:
+            n = self.df[c].nunique()
+            if n > self.MAX_ONE_HOT:
+                raise ValueError(f"“{c}” has {n} different values; at most {self.MAX_ONE_HOT} can become columns. "
+                                 "Use Group rare categories first.")
+            if n < 2:
+                raise ValueError(f"“{c}” has fewer than two different values, so there is nothing to encode.")
+        dummies = pd.get_dummies(self.df[cols], columns=cols, drop_first=bool(drop_first), dtype="int64")
+        clash = [n for n in dummies.columns if n in self.df.columns and (keep_original or n not in cols)]
+        if clash:
+            raise ValueError(f"Column(s) already exist: {', '.join(map(str, clash[:5]))}. Rename them first.")
+        gaps = int(self.df[cols].isna().any(axis=1).sum())
+        args = f"columns={cols!r}, drop_first={bool(drop_first)}, dtype='int64'"
+        if keep_original:
+            self.df = self.df.join(dummies)
+            self.code = f"df = df.join(pd.get_dummies(df[{cols!r}], {args}))"
+        else:
+            self.df = pd.get_dummies(self.df, columns=cols, drop_first=bool(drop_first), dtype="int64")
+            self.code = f"df = pd.get_dummies(df, {args})"
+        extra = f" {_plural(gaps, 'row')} with a missing value get 0 in that column's indicators." if gaps else ""
+        return f"Added {_plural(dummies.shape[1], 'indicator column')} for {', '.join(map(str, cols))}.{extra}"
+
+    SCALERS = {
+        "standard": ("(df[c] - df[c].mean()) / df[c].std(ddof=0)", "mean 0 and standard deviation 1"),
+        "minmax": ("(df[c] - df[c].min()) / (df[c].max() - df[c].min())", "the range 0 to 1"),
+    }
+
+    def scale(self, columns, method="standard", keep_original=False):
+        """Standardize (z-score, like scikit-learn's StandardScaler) or min-max scale numeric columns."""
+        cols = self._numeric_cols(self._require(columns))
+        if method not in self.SCALERS:
+            raise ValueError("Method must be standard or minmax.")
+        expr, what = self.SCALERS[method]
+        flat = [c for c in cols if self.df[c].nunique() < 2]
+        if flat:
+            raise ValueError(f"Can't scale a column with a single value: {', '.join(map(str, flat))}.")
+        names = self._target_names(cols, "_scaled", keep_original)
+        lines = []
+        for c in cols:
+            s = self.df[c].astype("float64")
+            self.df[names[c]] = (s - s.mean()) / s.std(ddof=0) if method == "standard" else (s - s.min()) / (s.max() - s.min())
+            lines.append(f"df[{names[c]!r}] = " + expr.replace("df[c]", f"df[{c!r}].astype('float64')"))
+        self.code = "\n".join(lines)
+        where = f", saved as {', '.join(names.values())}" if keep_original else ""
+        return f"Scaled {_plural(len(cols), 'column')} to {what}{where}."
+
+    @staticmethod
+    def _bin_labels(edges):
+        def one(a, b, digits):
+            if a == -np.inf:
+                return f"≤ {b:.{digits}g}"
+            if b == np.inf:
+                return f"> {a:.{digits}g}"
+            return f"{a:.{digits}g}–{b:.{digits}g}"
+
+        for digits in range(3, 12):
+            labels = [one(a, b, digits) for a, b in zip(edges[:-1], edges[1:], strict=True)]
+            if len(set(labels)) == len(labels):
+                return labels
+        return [f"bin {i + 1}" for i in range(len(edges) - 1)]
+
+    def bin_values(self, column, method="width", bins=5, edges="", name=""):
+        """Turn a number into ordered ranges (equal width, equal count or your own edges)."""
+        if column not in self.df.columns:
+            raise ValueError(f"Unknown column: {column}.")
+        self._numeric_cols([column])
+        s = self.df[column].dropna().astype("float64")
+        if s.empty:
+            raise ValueError(f"“{column}” has no values to bin.")
+        if method in ("width", "quantile"):
+            n = self._number(bins, "Number of bins", integer=True, minimum=2)
+            if n > 100:
+                raise ValueError("Use at most 100 bins.")
+            if method == "width":
+                if s.min() == s.max():
+                    raise ValueError(f"Every value of “{column}” is the same; there is nothing to split.")
+                cuts = np.linspace(s.min(), s.max(), n + 1).tolist()
+                how = f"{n} equal-width ranges"
+            else:
+                cuts = np.unique(np.quantile(s, np.linspace(0, 1, n + 1))).tolist()
+                if len(cuts) < 3:
+                    raise ValueError(f"“{column}” has too few different values for {n} equal-count groups.")
+                how = f"{len(cuts) - 1} equal-count groups"
+                if len(cuts) - 1 < n:
+                    how += f" (asked for {n}; repeated values merged some)"
+        elif method == "edges":
+            parts = [p for p in str(edges or "").replace(";", ",").split(",") if p.strip()]
+            try:
+                cuts = [float(p) for p in parts]
+            except ValueError as e:
+                raise ValueError("Edges must be numbers separated by commas, e.g. 0, 18, 30, 65, inf.") from e
+            if len(cuts) < 2 or any(b <= a for a, b in zip(cuts[:-1], cuts[1:], strict=True)):
+                raise ValueError("Give at least two edges in increasing order, e.g. 0, 18, 30, 65, inf.")
+            how = f"{len(cuts) - 1} custom ranges"
+        else:
+            raise ValueError("Method must be width, quantile or edges.")
+        new = (name or "").strip() or f"{column}_bin"
+        if new in self.df.columns and new != column:
+            raise ValueError(f"Column '{new}' already exists. Choose another name.")
+        labels = self._bin_labels(cuts)
+        before_missing = int(self.df[column].isna().sum())
+        self.df[new] = pd.cut(self.df[column], bins=cuts, labels=labels, include_lowest=True)
+        outside = int(self.df[new].isna().sum()) - before_missing
+        bins_code = "[" + ", ".join(repr(x) if np.isfinite(x) else f"float('{x}')" for x in cuts) + "]"
+        self.code = f"df[{new!r}] = pd.cut(df[{column!r}], bins={bins_code}, labels={labels!r}, include_lowest=True)"
+        tail = f" {_plural(outside, 'value')} fell outside the edges and became missing." if outside else ""
+        return f"Binned {column} into {how} as {new}.{tail}"
+
+    LOGS = {"log1p": ("np.log1p", -1, "log(1 + x)"), "log": ("np.log", 0, "natural log"), "log10": ("np.log10", 0, "log10")}
+
+    def log_transform(self, columns, method="log1p", keep_original=False):
+        """Compress a long right tail (prices, counts, incomes)."""
+        cols = self._numeric_cols(self._require(columns))
+        if method not in self.LOGS:
+            raise ValueError("Method must be log1p, log or log10.")
+        func, floor, label = self.LOGS[method]
+        for c in cols:
+            bad = int((self.df[c] <= floor).sum())
+            if bad:
+                hint = " Use log(1 + x), which accepts zeros." if method != "log1p" and (self.df[c] > -1).all() else ""
+                raise ValueError(f"“{c}” has {_plural(bad, 'value')} at or below {floor}, where {label} is undefined.{hint}")
+        names = self._target_names(cols, "_log", keep_original)
+        lines = []
+        for c in cols:
+            self.df[names[c]] = getattr(np, func.split(".")[1])(self.df[c].astype("float64"))
+            lines.append(f"df[{names[c]!r}] = {func}(df[{c!r}].astype('float64'))")
+        self.code = "\n".join(lines)
+        where = f", saved as {', '.join(names.values())}" if keep_original else ""
+        return f"Applied {label} to {_plural(len(cols), 'column')}{where}."
+
+    def group_rare(self, columns, mode="top", top_n=10, min_share=1, label="Other"):
+        """Merge infrequent categories into one label."""
+        cols = self._require(columns)
+        label = str(label if label is not None else "Other").strip() or "Other"
+        lines, merged = [], []
+        for c in cols:
+            if pd.api.types.is_numeric_dtype(self.df[c]) and not pd.api.types.is_bool_dtype(self.df[c]):
+                raise ValueError(f"“{c}” holds numbers; use Bin values to group them.")
+            counts = self.df[c].value_counts()
+            if mode == "top":
+                n = self._number(top_n, "Categories to keep", integer=True, minimum=1)
+                keep = counts.index[:n].tolist()
+            elif mode == "share":
+                share = self._number(min_share, "Minimum share", minimum=0) / 100
+                keep = counts.index[counts / counts.sum() >= share].tolist() if counts.sum() else []
+            else:
+                raise ValueError("Mode must be top or share.")
+            rare = counts.index.difference(keep)
+            if len(rare) == 0:
+                continue
+            is_cat = isinstance(self.df[c].dtype, pd.CategoricalDtype)
+            col = self.df[c].astype(object) if is_cat else self.df[c]
+            self.df[c] = col.where(col.isin(keep) | col.isna(), label)
+            ref = f"df[{c!r}]"
+            lines.append(f"keep = {keep!r}")
+            if is_cat:
+                lines.append(f"{ref} = {ref}.astype(object)")
+            lines.append(f"{ref} = {ref}.where({ref}.isin(keep) | {ref}.isna(), {label!r})")
+            merged.append(f"{c} ({len(rare)} → {label!r}, {int(counts[rare].sum()):,} rows)")
+        if not merged:
+            raise ValueError("Nothing to group: every category is common enough with these settings.")
+        self.code = "\n".join(lines)
+        return f"Grouped rare categories: {'; '.join(merged)}."
 
     # ---- SQL ---------------------------------------------------------------
 

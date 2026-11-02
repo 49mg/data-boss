@@ -48,6 +48,13 @@ const CLEAN_OPS = [
     { key: "ADD_COLUMN", label: "Calculated column", desc: "Computes a new column for every row with an expression, e.g. price / visits, ROUND(price * 1.1, 2), upper(city), or CASE WHEN totalScore >= 4.5 THEN 'top' ELSE 'other' END. Using an existing name replaces that column." },
     { key: "DATE_PARTS", label: "Date parts", desc: "Adds columns such as year, month, weekday or hour from a date column, ready for grouping and charts." },
   ] },
+  { group: "Features for modeling", icon: "i-chart", items: [
+    { key: "ONE_HOT", label: "One-hot encode", desc: "Turns a category column into 0/1 indicator columns, one per value (plan → plan_basic, plan_pro…), so models that need numbers can use it." },
+    { key: "SCALE", label: "Scale numbers", desc: "Puts numeric columns on a common scale: standard (mean 0, standard deviation 1, like scikit-learn's StandardScaler) or min-max (0 to 1)." },
+    { key: "BIN", label: "Bin into ranges", desc: "Turns a number into ordered ranges such as 18–30, 30–45: equal width, equal count (quantiles) or your own edges. Each range includes its upper edge." },
+    { key: "LOG_TRANSFORM", label: "Log transform", desc: "Compresses long right tails (prices, counts, income) so a few huge values don't dominate charts and models. log(1 + x) also accepts zeros." },
+    { key: "GROUP_RARE", label: "Group rare categories", desc: "Merges infrequent values into one label such as “Other”: keep the N most common, or values that make up at least a given share of rows." },
+  ] },
   { group: "Types & columns", icon: "i-columns", items: [
     { key: "TO_NUMERIC", label: "Convert to number", desc: "Turns text like “1,200”, “$80” or “15%” into numbers so you can compute and chart them." },
     { key: "TO_DATETIME", label: "Convert to date", desc: "Parses text into real dates for sorting, filtering and time charts." },
@@ -1391,6 +1398,52 @@ function cleanSpecs(method, memory) {
             ["week", "Week of year"], ["day", "Day of month"], ["weekday", "Weekday name"], ["weekday_num", "Weekday (0 = Monday)"], ["hour", "Hour"]]) },
       ];
     }
+    case "ONE_HOT":
+      return [
+        { key: "columns", label: "Category columns", type: "multi", options: categoricalCols().filter((c) => uniqueOf(c) <= 50),
+          hint: "Columns with up to 50 different values. Group rare categories first if there are more." },
+        TOGGLE("drop_first", "Drop the first category", false, "Avoids one redundant column, as linear models usually want."),
+        TOGGLE("keep_original", "Keep the original columns", false),
+      ];
+    case "SCALE":
+      return [
+        { key: "columns", label: "Numeric columns", type: "multi", options: numericColOptions() },
+        { key: "method", label: "Method", type: "select",
+          options: toOptions([["standard", "Standard (z-score): mean 0, std 1"], ["minmax", "Min-max: 0 to 1"]]) },
+        TOGGLE("keep_original", "Keep the original columns", false, "Writes the scaled values to new <column>_scaled columns."),
+      ];
+    case "BIN": {
+      const specs = [
+        { key: "column", label: "Numeric column", type: "select", options: numericColOptions() },
+        { key: "method", label: "Ranges", type: "select", rerender: true,
+          options: toOptions([["width", "Equal width"], ["quantile", "Equal count (quantiles)"], ["edges", "My own edges…"]]) },
+      ];
+      if (memory.method === "edges") {
+        specs.push({ key: "edges", label: "Edges", type: "text", hint: "Numbers in increasing order, e.g. 0, 18, 30, 65, inf" });
+      } else {
+        specs.push({ key: "bins", label: "Number of ranges", type: "text", default: "5" });
+      }
+      specs.push({ key: "name", label: "New column name (optional)", type: "text", hint: "Default: <column>_bin" });
+      return specs;
+    }
+    case "LOG_TRANSFORM":
+      return [
+        { key: "columns", label: "Numeric columns", type: "multi", options: numericColOptions() },
+        { key: "method", label: "Function", type: "select",
+          options: toOptions([["log1p", "log(1 + x): accepts zeros"], ["log", "Natural log: values must be > 0"], ["log10", "log10: values must be > 0"]]) },
+        TOGGLE("keep_original", "Keep the original columns", false, "Writes the result to new <column>_log columns."),
+      ];
+    case "GROUP_RARE": {
+      const specs = [
+        { key: "columns", label: "Category columns", type: "multi", options: textColOptions() },
+        { key: "mode", label: "Keep", type: "select", rerender: true,
+          options: toOptions([["top", "The N most common values"], ["share", "Values with at least a share of rows"]]) },
+      ];
+      if (memory.mode === "share") specs.push({ key: "min_share", label: "Minimum share (%)", type: "text", default: "1" });
+      else specs.push({ key: "top_n", label: "Values to keep", type: "text", default: "10" });
+      specs.push({ key: "label", label: "Label for the rest", type: "text", default: "Other" });
+      return specs;
+    }
     case "RENAME_COLUMN":
       return [
         { key: "old_name", label: "Column to rename", type: "select", options: cols },
@@ -1429,7 +1482,8 @@ function cleanParams(method, v) {
 /** Returns a reason string when the form is incomplete, otherwise "". */
 function cleanInvalid(method, v) {
   if (!method) return "Choose an operation.";
-  const needCols = ["NORMALIZE_TEXT", "ROUND", "TO_NUMERIC", "TO_DATETIME", "DROP_COLUMNS", "FILL_NA"];
+  const needCols = ["NORMALIZE_TEXT", "ROUND", "TO_NUMERIC", "TO_DATETIME", "DROP_COLUMNS", "FILL_NA",
+    "ONE_HOT", "SCALE", "LOG_TRANSFORM", "GROUP_RARE"];
   if (needCols.includes(method) && !(v.columns && v.columns.length)) return "Select at least one column.";
   if (method === "FILL_NA" && v.strategy === "constant" && !v.value) return "Enter the value to fill with.";
   if (method === "FILTER_ROWS" && !["is_missing", "not_missing"].includes(v.operator) && !v.value)
@@ -1447,6 +1501,11 @@ function cleanInvalid(method, v) {
   if (method === "ADD_COLUMN") {
     if (!(v.name || "").trim()) return "Enter a name for the new column.";
     if (!(v.expression || "").trim()) return "Write an expression, e.g. price / visits.";
+  }
+  if (method === "BIN") {
+    if (!v.column) return "Choose a numeric column.";
+    if (v.method === "edges" && !(v.edges || "").trim()) return "Enter the range edges, e.g. 0, 18, 30, 65, inf.";
+    if (v.method !== "edges" && !(v.bins || "").trim()) return "Enter the number of ranges.";
   }
   if (method === "DATE_PARTS") {
     if (!datetimeCols().length) return "No date columns yet. Use Convert to date on a text column first.";

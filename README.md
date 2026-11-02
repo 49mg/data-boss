@@ -76,6 +76,11 @@ A **column detail picker** below the table lets you select any column and view i
 | Change column type      | Converts a column to int64, float64, str, or bool              |
 | Drop columns            | Removes one or more selected columns                           |
 | Replace values          | Find-and-replace within a selected column                      |
+| One-hot encode          | 0/1 indicator columns per category (optionally drop the first)  |
+| Scale numbers           | Standard (z-score, like StandardScaler) or min-max scaling      |
+| Bin into ranges         | Equal-width, equal-count (quantile) or custom-edge ranges       |
+| Log transform           | log(1 + x), natural log or log10 for long-tailed numbers        |
+| Group rare categories   | Merge infrequent values into "Other" (top N or minimum share)   |
 
 
 Every operation supports **Do / Undo** — the full history is preserved so you can step back to the original data at any point. The **Export CSV** button always exports the current working state.
