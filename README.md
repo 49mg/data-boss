@@ -1,8 +1,30 @@
 # Data Boss
 
-A Streamlit app for exploring and cleaning CSV datasets. Upload a file, profile columns, inspect data quality, apply cleaning operations with full undo history, and generate charts — all from the browser.
+A desktop app (Electron + Python/pandas) for exploring and cleaning CSV datasets. Open a file, profile columns, inspect data quality, apply cleaning operations with full undo history, and generate charts — all in a native window.
 
 Built around three focused classes: `DataInspector` for summaries, `DataCleaner` for mutations, and `DataVisualizer` for plots.
+
+## Install
+
+Download the file for your computer from the [latest release](https://github.com/49mg/data-boss/releases/latest). Nothing else is needed — Python and all libraries are bundled inside the app.
+
+| Your computer | Download | How to install |
+|---|---|---|
+| **Windows 10/11** | `Data-Boss-x.y.z-win-x64.exe` | Run it and follow the installer. Launch from the Start menu or desktop shortcut. |
+| **Mac with Apple silicon** (M1–M4) | `Data-Boss-x.y.z-mac-arm64.dmg` | Open it and drag **Data Boss** into **Applications**. |
+| **Mac with Intel chip** | `Data-Boss-x.y.z-mac-x64.dmg` | Same as above. |
+| **Ubuntu / Debian** | `Data-Boss-x.y.z-linux-amd64.deb` | `sudo apt install ./Data-Boss-x.y.z-linux-amd64.deb`, then find it in your app menu. |
+| **Any other Linux** | `Data-Boss-x.y.z-linux-x86_64.AppImage` | `chmod +x Data-Boss-*.AppImage`, then double-click or run it. |
+
+Not sure which Mac you have? Apple menu → **About This Mac** → look for "Chip: Apple M…" (Apple silicon) or "Processor: Intel".
+
+### First launch: security warnings
+
+The app is not code-signed yet, so the operating system asks you to confirm the first time:
+
+- **Windows** — "Windows protected your PC": click **More info → Run anyway**.
+- **macOS** — "Data Boss can't be opened" or "Apple could not verify…": click **Done**, then open **System Settings → Privacy & Security**, scroll down and click **Open Anyway** next to Data Boss. Only needed once.
+- **Linux AppImage** — if it doesn't start, install FUSE 2: `sudo apt install libfuse2` (on Ubuntu 24.04 and newer: `sudo apt install libfuse2t64`).
 
 ## Features
 
@@ -40,7 +62,7 @@ A **column detail picker** below the table lets you select any column and view i
 | Strip whitespace        | Trims leading/trailing spaces from all string columns          |
 | Fill NaN with mean      | Fills missing numeric values with the column mean              |
 | Fill NaN with median    | Fills missing numeric values with the column median            |
-| Clip outliers — IQR     | Clips values beyond 1.5×IFeaturesFeaturesQR per numeric column |
+| Clip outliers — IQR     | Clips values beyond 1.5×IQR per numeric column |
 | Clip outliers — Z-score | Clips values beyond ±3σ per numeric column                     |
 | Rename column           | Renames a selected column                                      |
 | Change column type      | Converts a column to int64, float64, str, or bool              |
@@ -48,7 +70,7 @@ A **column detail picker** below the table lets you select any column and view i
 | Replace values          | Find-and-replace within a selected column                      |
 
 
-Every operation supports **Do / Undo** — the full history is preserved so you can step back to the original data at any point. The **Download CSV** button always exports the current working state.
+Every operation supports **Do / Undo** — the full history is preserved so you can step back to the original data at any point. The **Export CSV** button always exports the current working state.
 
 **Session History** — a collapsible panel lists every operation applied in order, with the result message and row/column delta (e.g. `rows -3`, `cols -1`). Undo removes the last entry automatically.
 
@@ -76,11 +98,33 @@ Missing values in selected columns are flagged before plotting. Rows with nulls 
 - **CSV validation** — malformed files show a clear error instead of crashing
 - **Error handling** on all cleaning operations — failed operations show an error and leave the dataframe unchanged
 
+### Desktop extras
+
+- **Drag & drop** a CSV anywhere in the window to open it
+- **Native dialogs** for opening and exporting files
+- **Save PNG** for any generated chart
+- **Shortcuts** — `Ctrl/Cmd+O` open, `Ctrl/Cmd+S` export, `Ctrl/Cmd+Z` undo
+- Follows the system **light/dark** theme
+
 ## Project structure
 
 ```
 data-boss/
-├── main.py                 # Streamlit entry point
+├── package.json            # Electron app manifest, scripts and installer config
+├── .github/workflows/
+│   └── release.yml         # Builds installers for Windows, macOS and Linux
+├── assets/icon.png         # App icon (converted to .ico/.icns at build time)
+├── electron/
+│   ├── main.js             # Main process: window, dialogs, spawns the Python backend
+│   └── preload.js          # Safe bridge exposing `window.api` to the UI
+├── renderer/
+│   ├── index.html          # UI markup and icon sprite
+│   ├── styles.css          # UI styles (light + dark)
+│   ├── app.js              # UI logic
+│   ├── theme.js            # Applies the saved/system theme before first paint
+│   ├── citymap.js          # Decorative city-map background
+│   └── fonts/              # Bundled Geist font (SIL Open Font License)
+├── server.py               # Python backend: JSON-lines over stdin/stdout, holds dataframe state
 ├── src/
 │   ├── base.py             # Abstract base classes (BaseDataInspector, BaseDataCleaner, BaseDataVisualizer)
 │   ├── inspectors.py       # DataInspector — read-only data summaries
@@ -89,50 +133,93 @@ data-boss/
 └── pyproject.toml
 ```
 
-## Requirements
+## Development setup
 
-- Python 3.10+
-- pandas
-- streamlit
-- matplotlib
-- seaborn
+Requirements: Node.js 18+ and npm, Python 3.10+, and [uv](https://github.com/astral-sh/uv).
 
-## Installation
-
-Clone the repository and install dependencies:
+Clone the repository, then install the Python and Node dependencies:
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/49mg/data-boss.git
 cd data-boss
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -e .
-```
 
-Or with [uv](https://github.com/astral-sh/uv):
-
-```bash
+# Python backend (creates .venv)
 uv sync
+# or: python -m venv .venv && source .venv/bin/activate && pip install -e .
+
+# Electron frontend
+npm install
 ```
 
 ## Usage
 
-Start the app:
+Start the desktop app from source:
 
 ```bash
-streamlit run main.py
+npm start
 ```
 
-Open the URL shown in the terminal (usually `http://localhost:8501`).
+The app looks for the Python interpreter in `.venv/` first and falls back to `python3` (`python` on Windows). Set `DATA_BOSS_PYTHON=/path/to/python` to use a specific interpreter.
 
-1. Upload a CSV file (max 200 MB) via the file uploader.
-2. Browse the raw dataframe and **Column Profile** for a per-column summary.
-3. Pick a **Display way** option for deeper data quality inspection.
-4. Pick a **Cleaning method**, configure any extra inputs, then click **Do** to apply or **Undo** to revert.
-5. Check the **Session History** panel to review all applied operations and their shape impact.
-6. Check the **Before / After Preview** panel to compare the dataframe before and after the last operation.
-7. Pick a **Visualization way**, choose columns, and click the generate button.
-8. Click **Download CSV** to export the current (cleaned) dataframe.
+1. Click **Open CSV** (or drop a file on the window) — max 200 MB.
+2. **Data** shows summary cards (rows, columns, missing cells, duplicates) and the rows themselves.
+3. **Column profile** shows each column's type, missing share, unique count and top values.
+4. **Inspect** has tabs for Info, Description, Missing values and Duplicated rows.
+5. **Clean**: pick an operation, fill in any inputs, then click **Apply** — or **Undo** to revert. The history timeline and before/after tables show what each step changed.
+6. **Visualize**: pick a chart tile, choose columns, then **Render chart**. **Save PNG** saves it.
+7. Click **Export** to save the current (cleaned) data as CSV.
+
+## How it works
+
+The Electron main process spawns `server.py` once at startup and talks to it with newline-delimited JSON over stdin/stdout:
+
+```
+→ {"id": 3, "cmd": "clean", "args": {"method": "DROP_NA_ROWS"}}
+← {"id": 3, "ok": true, "result": {"message": "...", "state": {...}}}
+```
+
+The backend owns all dataframe state (working copy, undo stack, operation log). Charts are rendered with Matplotlib/Seaborn and returned as PNG data URLs. No web server or open port is involved.
+
+## Building installers
+
+Installers are built in two stages:
+
+1. **PyInstaller** bundles `server.py` with Python, pandas, matplotlib and seaborn into a standalone `data-boss-backend` program (`build/pyinstaller/`).
+2. **electron-builder** packages the Electron app with that program in `resources/backend/` and produces the installer in `dist/`.
+
+When the app is installed (`app.isPackaged`), `electron/main.js` starts the bundled program instead of `.venv` Python.
+
+Build for the computer you are on:
+
+```bash
+npm run dist        # current OS
+npm run dist:linux  # AppImage + .deb
+npm run dist:mac    # .dmg (on a Mac)
+npm run dist:win    # .exe (on Windows)
+```
+
+PyInstaller cannot cross-compile, so each OS's installer has to be built on that OS. GitHub Actions does this for you.
+
+### Publishing a release
+
+1. Bump `version` in `package.json` (for example `0.2.0`) and commit.
+2. Tag and push:
+
+   ```bash
+   git tag v0.2.0
+   git push origin main v0.2.0
+   ```
+
+3. The **Build installers** workflow builds Windows, macOS (Apple silicon + Intel) and Linux in parallel (~10–15 min) and publishes them on the [Releases page](https://github.com/49mg/data-boss/releases).
+
+To test the builds without publishing, open **Actions → Build installers → Run workflow**. The installers appear as downloadable artifacts on the run.
+
+### Code signing (optional, removes the security warnings)
+
+- **macOS**: an Apple Developer account ($99/year) for a Developer ID certificate and notarization.
+- **Windows**: a code-signing certificate, or Azure Trusted Signing.
+
+electron-builder picks these up from the `CSC_LINK` / `CSC_KEY_PASSWORD` (and `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` for notarization) environment variables. Add them as repository secrets and pass them to the build step, and remove `"identity": "-"` from the `mac` config.
 
 ## Architecture
 
@@ -143,7 +230,7 @@ Each layer has a single responsibility:
 | ------------- | -------------------- | ---------------- | -------------------------------------- |
 | Inspection    | `BaseDataInspector`  | `DataInspector`  | Read-only display of data quality info |
 | Cleaning      | `BaseDataCleaner`    | `DataCleaner`    | Dataframe mutations + CSV export       |
-| Visualization | `BaseDataVisualizer` | `DataVisualizer` | Matplotlib/Seaborn charts              |
+| Visualization | `BaseDataVisualizer` | `DataVisualizer` | Matplotlib/Seaborn charts → PNG bytes  |
 
 
 Each concrete class registers its methods in a dictionary and dispatches through `render()` or `apply_clean()`, so new inspection types, cleaning operations, or chart types can be added without changing the UI wiring.
@@ -157,9 +244,9 @@ from src import DataInspector, DataCleaner, DataVisualizer
 df = pd.read_csv("your_file.csv")
 
 inspector = DataInspector(df)
-inspector.show_info()
-inspector.show_desc()
-inspector.show_column_profile()
+print(inspector.show_info()["text"])
+print(inspector.show_desc()["table"])
+print(inspector.show_column_profile())
 
 cleaner = DataCleaner(df)
 cleaner.remove_duplicates()

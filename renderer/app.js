@@ -1,0 +1,1974 @@
+"use strict";
+
+const PAGE_SIZE = 100;
+
+const DTYPE_OPTIONS = [
+  { value: "int64", label: "Integer (int64)" },
+  { value: "float64", label: "Float (float64)" },
+  { value: "str", label: "Text (str)" },
+  { value: "bool", label: "Boolean (bool)" },
+];
+
+const CHART_TYPES = [
+  { kind: "HIST", label: "Histogram", icon: "c-hist", hint: "How one numeric column is distributed" },
+  { kind: "BOX", label: "Box plot", icon: "c-box", hint: "Compare a numeric column across groups" },
+  { kind: "SCAT", label: "Scatter", icon: "c-scatter", hint: "Relationship between two numeric columns" },
+  { kind: "BAR", label: "Bar chart", icon: "c-bar", hint: "Sum, mean or median per category" },
+  { kind: "COUNT", label: "Count", icon: "c-count", hint: "How often each value appears" },
+  { kind: "LINE", label: "Line", icon: "c-line", hint: "Trends over time or an ordered axis" },
+  { kind: "HEAT", label: "Correlation", icon: "c-heat", hint: "How every numeric column relates to the others" },
+  { kind: "PAIR", label: "Pair plot", icon: "c-pair", hint: "Every pair of numeric columns at once" },
+];
+
+const CLEAN_OPS = [
+  { group: "Rows", icon: "i-table", items: [
+    { key: "REMOVE_DUPLICATES", label: "Remove duplicates", desc: "Drops repeated rows. Match on whole rows, or only on the columns you choose (e.g. the same name)." },
+    { key: "DROP_NA_ROWS", label: "Drop rows with gaps", desc: "Removes rows that have missing values, in any column or only in the columns you choose." },
+    { key: "FILTER_ROWS", label: "Filter rows", desc: "Keeps or removes rows that match a condition, like score < 10 or name contains “gym”." },
+    { key: "SORT_ROWS", label: "Sort rows", desc: "Reorders rows by one column. Missing values go last." },
+  ] },
+  { group: "Missing values", icon: "i-scan", items: [
+    { key: "FILL_NA", label: "Fill missing values", desc: "Fills gaps with the median, mean, most common value, a fixed value, or the neighbouring row's value." },
+    { key: "DROP_NA_COLUMNS", label: "Drop empty columns", desc: "Removes columns where every value is missing." },
+  ] },
+  { group: "Text", icon: "i-file", items: [
+    { key: "STRIP_WHITESPACE", label: "Trim spaces", desc: "Removes leading and trailing spaces, so “Basra ” and “Basra” become the same value." },
+    { key: "NORMALIZE_TEXT", label: "Normalize text", desc: "Trims, collapses repeated spaces and optionally unifies letter case, so “baghdad” and “Baghdad” group together." },
+    { key: "REPLACE_VALUES", label: "Replace values", desc: "Finds an exact value in one column and replaces it. Leave “Replace with” empty to mark those cells as missing." },
+  ] },
+  { group: "Numbers", icon: "i-chart", items: [
+    { key: "CLIP_IQR", label: "Clip outliers (IQR)", desc: "Caps values outside Q1 − 1.5×IQR and Q3 + 1.5×IQR to those limits. Rows are kept." },
+    { key: "CLIP_ZSCORE", label: "Clip outliers (z-score)", desc: "Caps values more than 3 standard deviations from the mean. Rows are kept." },
+    { key: "ROUND", label: "Round numbers", desc: "Rounds numeric columns to a fixed number of decimal places." },
+  ] },
+  { group: "Types & columns", icon: "i-columns", items: [
+    { key: "TO_NUMERIC", label: "Convert to number", desc: "Turns text like “1,200”, “$80” or “15%” into numbers so you can compute and chart them." },
+    { key: "TO_DATETIME", label: "Convert to date", desc: "Parses text into real dates for sorting, filtering and time charts." },
+    { key: "CHANGE_DTYPE", label: "Change type", desc: "Strict conversion to int, float, text or bool. Fails without changes if any value doesn't fit." },
+    { key: "RENAME_COLUMN", label: "Rename column", desc: "Gives a column a new name." },
+    { key: "DROP_COLUMNS", label: "Drop columns", desc: "Removes the selected columns." },
+  ] },
+];
+// Older operations that can still appear in history.
+const LEGACY_OPS = { FILL_NA_MEAN: "Fill with mean", FILL_NA_MEDIAN: "Fill with median" };
+
+const SECTION_TITLES = {
+  data: "Data",
+  profile: "Column profile",
+  inspect: "Inspect",
+  clean: "Clean",
+  visualize: "Visualize",
+};
+
+const app = {
+  state: null, // latest snapshot from the backend
+  section: "data",
+  page: 0,
+  inspectKind: "QUALITY",
+  cleanMethod: "",
+  script: null,
+  inspectParams: {}, // per-view options, e.g. duplicate key columns, correlation method
+  inspectStale: true,
+  chartKind: "",
+  chartImage: null,
+  chartCode: "",
+  chartParams: {},
+  chartStale: false,
+  recent: [],
+  forms: { clean: {}, chart: {} }, // remembered field values per form
+};
+
+const fmt = (n) => Number(n).toLocaleString("en-US");
+const pct = (part, whole) => (whole ? (part / whole) * 100 : 0);
+const fmtPct = (p) =>
+  p === 0 ? "0%" : p < 0.1 ? "<0.1%" : `${p.toFixed(p < 10 ? 1 : 0).replace(/\.0$/, "")}%`;
+const plural = (n, word) => `${fmt(n)} ${word}${n === 1 ? "" : "s"}`;
+
+const $ = (id) => document.getElementById(id);
+
+/* ------------------------------------------------------------------ */
+/* backend calls with busy indicator                                    */
+/* ------------------------------------------------------------------ */
+
+let busyCount = 0;
+let busyTimer = null;
+
+async function withBusy(promise) {
+  busyCount++;
+  $("busy").hidden = false;
+  if (!busyTimer) busyTimer = setTimeout(() => ($("progress").hidden = false), 120);
+  try {
+    return await promise;
+  } finally {
+    busyCount--;
+    if (busyCount === 0) {
+      clearTimeout(busyTimer);
+      busyTimer = null;
+      $("busy").hidden = true;
+      $("progress").hidden = true;
+    }
+  }
+}
+
+const call = (cmd, args) => withBusy(window.api.call(cmd, args));
+
+function cleanError(err) {
+  // ipcRenderer.invoke wraps errors as "Error invoking remote method 'x': Error: msg"
+  return String(err && err.message ? err.message : err).replace(
+    /^Error invoking remote method '[^']+': (Error: )?/,
+    ""
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* small DOM helpers                                                    */
+/* ------------------------------------------------------------------ */
+
+function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v === undefined || v === null || v === false) continue;
+    if (k === "class") node.className = v;
+    else if (k === "text") node.textContent = v;
+    else if (k === "style") node.style.cssText = v; // CSSOM is allowed by the CSP; style="" attributes are not
+    else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
+    else node.setAttribute(k, v === true ? "" : v);
+  }
+  for (const c of children.flat()) {
+    if (c === null || c === undefined) continue;
+    node.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  }
+  return node;
+}
+
+function note(kind, text) {
+  return el("div", { class: `note ${kind}`, text });
+}
+
+function icon(id, cls = "icon") {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", cls);
+  svg.setAttribute("aria-hidden", "true");
+  const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+  use.setAttribute("href", `#${id}`);
+  svg.append(use);
+  return svg;
+}
+
+function toast(kind, text) {
+  const box = $("toasts");
+  const dismiss = () => {
+    if (node.classList.contains("leaving")) return;
+    node.classList.add("leaving");
+    setTimeout(() => node.remove(), 180);
+  };
+  const node = el(
+    "div",
+    { class: `toast ${kind}`, role: kind === "error" ? "alert" : "status" },
+    el("span", { class: "toast-dot" }),
+    el("div", { class: "toast-text", text }),
+    el("button", { class: "toast-close", "aria-label": "Dismiss", onclick: dismiss }, icon("i-x"))
+  );
+  box.append(node);
+  while (box.children.length > 3) box.firstElementChild.remove();
+  setTimeout(dismiss, kind === "error" ? 9000 : 4500);
+}
+
+function formatCell(v) {
+  if (v === null || v === undefined) return { text: "NaN", cls: "null" };
+  if (typeof v === "number") {
+    const text = Number.isInteger(v) ? String(v) : String(Number(v.toPrecision(6)));
+    return { text, cls: "num" };
+  }
+  if (typeof v === "boolean") return { text: String(v), cls: "" };
+  return { text: String(v), cls: "" };
+}
+
+/** Render {columns, index, data} as a table. `types` adds a dtype line under each header. */
+function renderTable(container, payload, { showIndex = true, indexLabel = "", types = false } = {}) {
+  container.replaceChildren();
+  if (!payload) return;
+  const meta = types && app.state ? new Map(app.state.columns.map((c) => [c.name, c])) : null;
+  const head = el(
+    "tr",
+    {},
+    showIndex ? el("th", { class: "idx", text: indexLabel }) : null,
+    payload.columns.map((c) => {
+      const m = meta && meta.get(c);
+      return el(
+        "th",
+        { title: c, class: m && m.kind === "numeric" ? "num" : null },
+        c,
+        m ? el("span", { class: "th-type", text: m.dtype }) : null
+      );
+    })
+  );
+  const body = payload.data.map((row, i) =>
+    el(
+      "tr",
+      {},
+      showIndex ? el("td", { class: "idx", text: payload.index[i] }) : null,
+      row.map((v) => {
+        const { text, cls } = formatCell(v);
+        return el("td", { class: cls, text, title: text });
+      })
+    )
+  );
+  container.append(el("table", {}, el("thead", {}, head), el("tbody", {}, body)));
+}
+
+/* ------------------------------------------------------------------ */
+/* generic form builder                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * specs: [{ key, label, type: "select" | "multi" | "text", options, default }]
+ * options: array of strings or {value, label}
+ * memory:  object that keeps the user's values across rebuilds
+ */
+const hint = (spec) => (spec.hint ? el("small", { class: "field-hint", text: spec.hint }) : null);
+
+function buildForm(container, specs, memory, onChange) {
+  container.replaceChildren();
+  const values = {};
+
+  for (const spec of specs) {
+    const options = (spec.options || []).map((o) =>
+      typeof o === "string" ? { value: o, label: o } : o
+    );
+    const valid = new Set(options.map((o) => o.value));
+    const remembered = memory[spec.key];
+
+    if (spec.type === "select") {
+      let value = remembered !== undefined && valid.has(remembered) ? remembered : spec.default;
+      if (!valid.has(value)) value = options.length ? options[0].value : "";
+      values[spec.key] = value;
+      const select = el(
+        "select",
+        {
+          onchange: (e) => {
+            values[spec.key] = memory[spec.key] = e.target.value;
+            onChange(values, spec.key);
+          },
+        },
+        options.map((o) => el("option", { value: o.value, text: o.label }))
+      );
+      select.value = value;
+      container.append(el("label", { class: "field" }, el("span", { text: spec.label }), select, hint(spec)));
+    } else if (spec.type === "multi") {
+      const initial = Array.isArray(remembered) ? remembered : spec.default || [];
+      const selected = new Set(initial.filter((v) => valid.has(v)));
+      values[spec.key] = options.map((o) => o.value).filter((v) => selected.has(v));
+      const update = () => {
+        values[spec.key] = memory[spec.key] = options
+          .map((o) => o.value)
+          .filter((v) => selected.has(v));
+        onChange(values, spec.key);
+      };
+      const list = el(
+        "div",
+        { class: "checklist" },
+        options.map((o) => {
+          const box = el("input", {
+            type: "checkbox",
+            checked: selected.has(o.value),
+            onchange: (e) => {
+              if (e.target.checked) selected.add(o.value);
+              else selected.delete(o.value);
+              update();
+            },
+          });
+          return el("label", {}, box, o.label);
+        })
+      );
+      if (!options.length) list.replaceChildren(el("div", { class: "checklist-empty", text: "No matching columns." }));
+      container.append(el("div", { class: "field" }, el("span", { text: spec.label }), list, hint(spec)));
+      // Bring the first pre-ticked option into view (e.g. a column chosen from Inspect).
+      requestAnimationFrame(() => {
+        const first = list.querySelector("input:checked");
+        if (first) list.scrollTop = first.parentElement.offsetTop - list.clientHeight / 2;
+      });
+    } else if (spec.type === "toggle") {
+      const value = typeof remembered === "boolean" ? remembered : !!spec.default;
+      values[spec.key] = value;
+      const input = el("input", {
+        type: "checkbox",
+        role: "switch",
+        checked: value,
+        onchange: (e) => {
+          values[spec.key] = memory[spec.key] = e.target.checked;
+          onChange(values, spec.key);
+        },
+      });
+      container.append(el("label", { class: "field field-toggle" }, input, el("span", { class: "switch", "aria-hidden": "true" }),
+        el("span", { class: "toggle-label", text: spec.label }), hint(spec)));
+    } else {
+      const value = typeof remembered === "string" ? remembered : spec.default || "";
+      values[spec.key] = value;
+      const input = el("input", {
+        type: "text",
+        value,
+        oninput: (e) => {
+          values[spec.key] = memory[spec.key] = e.target.value;
+          onChange(values, spec.key);
+        },
+      });
+      container.append(el("label", { class: "field" }, el("span", { text: spec.label }), input, hint(spec)));
+    }
+  }
+  return values;
+}
+
+/* ------------------------------------------------------------------ */
+/* column helpers                                                       */
+/* ------------------------------------------------------------------ */
+
+const allCols = () => app.state.columns.map((c) => c.name);
+const numericCols = () => app.state.columns.filter((c) => c.kind === "numeric").map((c) => c.name);
+const categoricalCols = () =>
+  app.state.columns.filter((c) => c.kind === "categorical").map((c) => c.name);
+const missingOf = (name) => {
+  const col = app.state.columns.find((c) => c.name === name);
+  return col ? col.missing : 0;
+};
+
+/* ------------------------------------------------------------------ */
+/* state + navigation                                                   */
+/* ------------------------------------------------------------------ */
+
+function setState(snapshot) {
+  app.state = snapshot;
+  const [rows, cols] = snapshot.shape;
+  $("file-chip").hidden = false;
+  $("topbar-title").hidden = true;
+  $("file-name").textContent = snapshot.fileName;
+  $("file-name").title = snapshot.path || "";
+  $("file-meta").textContent = `${plural(rows, "row")} · ${plural(cols, "column")}`;
+  const ops = snapshot.log.length;
+  $("nav-clean-badge").hidden = ops === 0;
+  $("nav-clean-badge").textContent = ops;
+  $("btn-export").disabled = false;
+  $("btn-undo").disabled = !snapshot.canUndo;
+  $("btn-undo-2").disabled = !snapshot.canUndo;
+  $("empty").hidden = true;
+  for (const btn of document.querySelectorAll("#nav .nav-item")) btn.disabled = false;
+
+  const maxPage = Math.max(0, Math.ceil(rows / PAGE_SIZE) - 1);
+  if (app.page > maxPage) app.page = maxPage;
+
+  renderStats();
+  renderProfile();
+  renderCleanFields();
+  renderHistory();
+  renderPreview();
+  renderChartFields();
+  app.inspectStale = true; // refreshed when the Inspect screen is shown
+  showSection(app.section);
+}
+
+function stat(label, value, sub, subCls, meter) {
+  return el(
+    "div",
+    { class: "stat" },
+    el("div", { class: "stat-label", text: label }),
+    el("div", { class: "stat-value", text: value }),
+    sub ? el("div", { class: `stat-sub ${subCls || ""}`, text: sub }) : null,
+    meter !== undefined
+      ? el("div", { class: "stat-meter" }, el("span", { style: `width:${Math.min(100, meter)}%` }))
+      : null
+  );
+}
+
+function renderStats() {
+  const s = app.state;
+  const [rows, cols] = s.shape;
+  const cells = rows * cols;
+  const missingPct = pct(s.missingCells, cells);
+  const dupPct = pct(s.duplicateRows, rows);
+  const num = s.columns.filter((c) => c.kind === "numeric").length;
+  const cat = s.columns.filter((c) => c.kind === "categorical").length;
+  const gappy = s.columns.filter((c) => c.missing > 0).length;
+  $("stats").replaceChildren(
+    stat("Rows", fmt(rows), plural(cells, "cell")),
+    stat("Columns", fmt(cols), `${num} numeric · ${cat} text`),
+    stat(
+      "Missing cells",
+      fmt(s.missingCells),
+      s.missingCells ? `${fmtPct(missingPct)} of cells · ${gappy} column${gappy === 1 ? "" : "s"}` : "Complete",
+      s.missingCells ? "warn" : "good",
+      s.missingCells ? missingPct : undefined
+    ),
+    stat(
+      "Duplicate rows",
+      fmt(s.duplicateRows),
+      s.duplicateRows ? `${fmtPct(dupPct)} of rows` : "None found",
+      s.duplicateRows ? "warn" : "good"
+    ),
+    stat("Cleaning steps", fmt(s.log.length), s.log.length ? "Undo available" : "Original data")
+  );
+}
+
+function showSection(name) {
+  app.section = name;
+  for (const btn of document.querySelectorAll("#nav .nav-item")) {
+    btn.classList.toggle("active", btn.dataset.section === name);
+  }
+  for (const sec of document.querySelectorAll(".section")) {
+    sec.hidden = !app.state || sec.id !== `section-${name}`;
+  }
+  document.title = app.state ? `${SECTION_TITLES[name]} · ${app.state.fileName} — Data Boss` : "Data Boss";
+  if (app.state && name === "data") loadPage();
+  if (app.state && name === "inspect" && app.inspectStale) renderInspect();
+  if (app.state && name === "visualize" && app.chartKind && app.chartStale) scheduleRender(0);
+}
+
+async function loadPage() {
+  try {
+    const res = await call("rows", { offset: app.page * PAGE_SIZE, limit: PAGE_SIZE });
+    renderTable($("data-table"), res.table, { types: true });
+    const start = res.total === 0 ? 0 : res.offset + 1;
+    const end = Math.min(res.offset + PAGE_SIZE, res.total);
+    $("page-label").textContent = `${fmt(start)}–${fmt(end)} of ${fmt(res.total)}`;
+    $("page-prev").disabled = app.page === 0;
+    $("page-next").disabled = end >= res.total;
+  } catch (err) {
+    toast("error", cleanError(err));
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* file handling                                                        */
+/* ------------------------------------------------------------------ */
+
+function onLoaded(snapshot) {
+  if (!snapshot) return; // dialog cancelled
+  app.page = 0;
+  app.forms = { clean: {}, chart: {} };
+  app.chartImage = null;
+  app.recent = [];
+  renderRecent();
+  app.cleanMethod = "";
+  renderOpList();
+  app.chartKind = "";
+  app.inspectKind = "QUALITY";
+  app.inspectParams = {};
+  app.forms.dupes = {};
+  $("inspect-output").replaceChildren();
+  syncInspectTabs();
+  renderChartTiles();
+  setState(snapshot);
+  toast("success", `Loaded ${snapshot.fileName}`);
+}
+
+async function openCsv() {
+  try {
+    onLoaded(await withBusy(window.api.openCsv()));
+  } catch (err) {
+    toast("error", cleanError(err));
+  }
+}
+
+async function loadDroppedFile(file) {
+  if (!file.name.toLowerCase().endsWith(".csv")) {
+    toast("error", "Please drop a .csv file.");
+    return;
+  }
+  try {
+    onLoaded(await withBusy(window.api.loadPath(window.api.pathForFile(file))));
+  } catch (err) {
+    toast("error", cleanError(err));
+  }
+}
+
+async function exportCsv() {
+  try {
+    const base = (app.state.fileName || "data.csv").replace(/\.csv$/i, "");
+    const res = await withBusy(window.api.exportCsv(`${base}_cleaned.csv`));
+    if (res) toast("success", `Saved ${res.path}`);
+  } catch (err) {
+    toast("error", cleanError(err));
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* profile                                                              */
+/* ------------------------------------------------------------------ */
+
+function renderProfile() {
+  const profile = app.state.profile;
+  const idx = (name) => profile.columns.indexOf(name);
+  const [iCol, iNonNull, iUnique, iRange] = ["Column", "Non-null", "Unique", "Top values / Range"].map(idx);
+  const rows = app.state.shape[0];
+  const meta = new Map(app.state.columns.map((c) => [c.name, c]));
+
+  const head = el(
+    "tr",
+    {},
+    ["Column", "Type", "Missing", "Non-null", "Unique", "Top values / range"].map((h, i) =>
+      el("th", { text: h, class: i === 3 || i === 4 ? "num" : null })
+    )
+  );
+  const body = profile.data.map((r) => {
+    const name = String(r[iCol]);
+    const m = meta.get(name) || { dtype: "", kind: "other", missing: 0 };
+    const p = pct(m.missing, rows);
+    return el(
+      "tr",
+      {},
+      el("td", { class: "col-name", text: name, title: name }),
+      el("td", {}, el("span", { class: `type-badge ${m.kind}`, text: m.dtype })),
+      el(
+        "td",
+        {},
+        el(
+          "div",
+          { class: `miss ${m.missing ? "" : "none"}` },
+          el("div", { class: "miss-bar" }, el("span", { style: m.missing ? `width:${Math.max(2, p)}%` : null })),
+          m.missing ? `${fmt(m.missing)} · ${fmtPct(p)}` : "None"
+        )
+      ),
+      el("td", { class: "num", text: fmt(r[iNonNull]) }),
+      el("td", { class: "num", text: fmt(r[iUnique]) }),
+      el("td", { class: "range", text: r[iRange], title: r[iRange] })
+    );
+  });
+  $("profile-table").replaceChildren(el("table", {}, el("thead", {}, head), el("tbody", {}, body)));
+
+  const select = $("vc-column");
+  const prev = select.value;
+  select.replaceChildren(...allCols().map((c) => el("option", { value: c, text: c })));
+  if (allCols().includes(prev)) select.value = prev;
+  renderValueCounts();
+}
+
+async function renderValueCounts() {
+  const column = $("vc-column").value;
+  const box = $("vc-table");
+  if (!column) return box.replaceChildren();
+  try {
+    const res = await call("value_counts", { column });
+    const data = res.table.data;
+    const max = Math.max(1, ...data.map((r) => r[1]));
+    box.replaceChildren(
+      ...data.map(([value, count]) => {
+        const isNull = value === null || value === undefined;
+        const text = isNull ? "NaN" : String(value);
+        return el(
+          "div",
+          { class: "vc-row", title: `${text}: ${fmt(count)}` },
+          el("div", { class: "vc-fill", style: `width:${(count / max) * 100}%` }),
+          el("span", { class: `vc-value ${isNull ? "null" : ""}`, text }),
+          el("span", { class: "vc-count", text: fmt(count) })
+        );
+      })
+    );
+  } catch (err) {
+    toast("error", cleanError(err));
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* inspect                                                              */
+/* ------------------------------------------------------------------ */
+
+function syncInspectTabs() {
+  for (const tab of document.querySelectorAll("#inspect-tabs button")) {
+    tab.setAttribute("aria-selected", String(tab.dataset.kind === app.inspectKind));
+  }
+}
+
+/* formatting helpers for inspect views */
+const fnum = (v) => {
+  if (v === null || v === undefined) return "—";
+  if (v !== 0 && (Math.abs(v) >= 1e9 || Math.abs(v) < 1e-4)) return v.toExponential(2);
+  return Number(v.toPrecision(4)).toLocaleString("en-US", { maximumFractionDigits: 4 });
+};
+const fbytes = (b) =>
+  b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1048576).toFixed(1)} MB`;
+const sevLabel = { critical: "Critical", warning: "Warning", info: "Note" };
+
+function card(title, ...children) {
+  return el("div", { class: "card" }, title ? el("h2", { text: title }) : null, ...children);
+}
+function chips(cols, cls = "chip") {
+  return el("div", { class: "chips" }, cols.map((c) => el("span", { class: cls, text: c })));
+}
+function bar(fraction, cls = "") {
+  return el(
+    "div",
+    { class: `bar ${cls}` },
+    el("span", { style: `width:${Math.max(fraction > 0 ? 2 : 0, Math.min(100, fraction * 100))}%` })
+  );
+}
+function fixButton(action, extraCls = "") {
+  if (!action) return null;
+  return el(
+    "button",
+    { class: `btn btn-sm ${extraCls}`, onclick: () => openFix(action) },
+    icon("i-clean"),
+    action.label || "Fix in Clean"
+  );
+}
+
+/** Jump to Clean with an operation and its inputs filled in, ready to Apply. */
+function openFix(action) {
+  app.forms.clean[action.method] = { ...(action.params || {}) };
+  app.cleanMethod = action.method;
+  showSection("clean");
+  renderOpList();
+  renderCleanFields();
+  $("content").scrollTop = 0;
+  toast("success", "Operation prepared. Review it, then click Apply.");
+}
+
+/* ---- Overview ---------------------------------------------------------- */
+function viewQuality(res) {
+  const s = res.summary;
+  const tiles = el(
+    "div",
+    { class: "stats" },
+    stat("Completeness", s.completeness == null ? "—" : fmtPct(s.completeness * 100), "Share of filled cells",
+      s.completeness < 0.95 ? "warn" : "good", s.completeness * 100),
+    stat("Row uniqueness", s.uniqueness == null ? "—" : fmtPct(s.uniqueness * 100), "Rows that are not exact copies",
+      s.uniqueness < 1 ? "warn" : "good"),
+    el(
+      "div",
+      { class: "stat" },
+      el("div", { class: "stat-label", text: "Checks flagged" }),
+      el("div", { class: "stat-value", text: fmt(res.issues.length) }),
+      el(
+        "div",
+        { class: "sev-counts" },
+        ["critical", "warning", "info"].map((k) =>
+          el("span", { class: `sev-count ${k}` }, el("i"), `${s[k]} ${sevLabel[k].toLowerCase()}`)
+        )
+      )
+    )
+  );
+  if (!res.issues.length) {
+    return el("div", {}, tiles, el("div", { class: "note success", text: "No problems found. This dataset passed every check." }));
+  }
+  const list = el(
+    "div",
+    { class: "issues" },
+    res.issues.map((i) =>
+      el(
+        "div",
+        { class: `issue ${i.severity}` },
+        el("span", { class: `sev-pill ${i.severity}`, text: sevLabel[i.severity] }),
+        el(
+          "div",
+          { class: "issue-body" },
+          el("div", { class: "issue-title", text: i.title }),
+          el("p", { class: "issue-detail", text: i.detail }),
+          i.columns.length > 1 ? chips(i.columns) : null
+        ),
+        fixButton(i.action)
+      )
+    )
+  );
+  return el("div", {}, tiles, list);
+}
+
+/* ---- Structure --------------------------------------------------------- */
+function viewStructure(res) {
+  const head = el(
+    "div",
+    { class: "chips summary-chips" },
+    el("span", { class: "chip", text: `${plural(res.rows, "row")}` }),
+    el("span", { class: "chip", text: `${plural(res.columns.length, "column")}` }),
+    el("span", { class: "chip", text: `${fbytes(res.memory)} in memory` }),
+    res.dtypes.map((d) => el("span", { class: "chip mono", text: `${d.dtype} × ${d.count}` }))
+  );
+  const rows = res.columns.map((c) =>
+    el(
+      "tr",
+      {},
+      el("td", { class: "idx", text: c.position }),
+      el("td", { class: "col-name", text: c.name, title: c.name }),
+      el("td", {}, el("span", { class: `type-badge ${c.kind}`, text: c.dtype })),
+      el("td", { class: "num", text: fmt(c.nonNull) }),
+      el("td", { class: `num ${c.missing ? "warn-text" : "muted"}`, text: fmt(c.missing) }),
+      el("td", { class: "num", text: fmt(c.unique) }),
+      el("td", { class: "num muted", text: fbytes(c.memory) }),
+      el("td", { class: "samples" }, c.samples.map((v) => el("span", { class: "sample", text: v, title: v })))
+    )
+  );
+  const tbl = el(
+    "div",
+    { class: "card card-flush" },
+    el(
+      "div",
+      { class: "table-wrap" },
+      el(
+        "table",
+        {},
+        el("thead", {}, el("tr", {},
+          ["#", "Column", "Type", "Non-null", "Missing", "Unique", "Memory", "Sample values"].map((h, i) =>
+            el("th", { text: h, class: i === 0 ? "idx" : i >= 3 && i <= 6 ? "num" : null })))),
+        el("tbody", {}, rows)
+      )
+    )
+  );
+  const raw = el(
+    "details",
+    { class: "card raw" },
+    el("summary", { text: "Raw pandas info() output" }),
+    el("pre", { class: "info", text: res.raw })
+  );
+  return el("div", {}, head, tbl, raw);
+}
+
+/* ---- Statistics -------------------------------------------------------- */
+function histogram(h) {
+  const max = Math.max(1, ...h.counts);
+  return el(
+    "div",
+    { class: "hist-wrap" },
+    el("div", { class: "hist" },
+      h.counts.map((c) => el("span", { style: `height:${c ? Math.max(4, (c / max) * 100) : 0}%`, title: fmt(c) }))),
+    el("div", { class: "hist-axis" }, el("span", { text: fnum(h.min) }), el("span", { text: fnum(h.max) }))
+  );
+}
+function kv(pairs) {
+  return el("dl", { class: "kv" }, pairs.flatMap(([k, v, cls]) => [el("dt", { text: k }), el("dd", { class: cls || "", text: v })]));
+}
+function viewStats(res) {
+  const out = el("div", {});
+  if (res.numeric.length) {
+    out.append(el("h3", { class: "group-title", text: `Numeric columns · ${res.numeric.length}` }));
+    out.append(
+      el("div", { class: "stat-cards" },
+        res.numeric.map((c) =>
+          el(
+            "div",
+            { class: "col-card" },
+            el("div", { class: "col-card-head" },
+              el("span", { class: "col-name", text: c.name, title: c.name }),
+              el("span", { class: "type-badge numeric", text: c.dtype })),
+            c.hist ? histogram(c.hist) : el("div", { class: "hist-empty", text: "No values" }),
+            kv([
+              ["Mean", fnum(c.mean)], ["Median", fnum(c.median)],
+              ["Std dev", fnum(c.std)], ["Skew", fnum(c.skew), c.skew != null && Math.abs(c.skew) >= 2 ? "warn-text" : ""],
+              ["Min", fnum(c.min)], ["Max", fnum(c.max)],
+              ["Zeros", fmt(c.zeros ?? 0)], ["Missing", fmt(c.missing), c.missing ? "warn-text" : ""],
+            ])
+          )
+        ))
+    );
+  }
+  if (res.categorical.length) {
+    out.append(el("h3", { class: "group-title", text: `Text & category columns · ${res.categorical.length}` }));
+    out.append(
+      el("div", { class: "stat-cards" },
+        res.categorical.map((c) => {
+          const max = Math.max(1, ...c.top.map((t) => t.count));
+          return el(
+            "div",
+            { class: "col-card" },
+            el("div", { class: "col-card-head" },
+              el("span", { class: "col-name", text: c.name, title: c.name }),
+              el("span", { class: "type-badge categorical", text: c.dtype })),
+            el("div", { class: "top-list" },
+              c.top.length
+                ? c.top.map((t) =>
+                    el("div", { class: "vc-row", title: `${t.value}: ${fmt(t.count)}` },
+                      el("div", { class: "vc-fill", style: `width:${(t.count / max) * 100}%` }),
+                      el("span", { class: "vc-value", text: t.value }),
+                      el("span", { class: "vc-count", text: fmt(t.count) })))
+                : el("div", { class: "hist-empty", text: "No values" })),
+            kv([
+              ["Unique", fmt(c.unique)], ["Missing", fmt(c.missing), c.missing ? "warn-text" : ""],
+              ["Filled", fmt(c.count)], ["Avg length", c.avgLength == null ? "—" : c.avgLength.toFixed(1)],
+            ])
+          );
+        }))
+    );
+  }
+  return out;
+}
+
+/* ---- Missing ----------------------------------------------------------- */
+function viewMissing(res) {
+  const cells = res.rows * res.columns.length;
+  const gappy = res.columns.filter((c) => c.missing > 0);
+  const tiles = el(
+    "div",
+    { class: "stats" },
+    stat("Missing cells", fmt(res.cells), `${fmtPct(pct(res.cells, cells))} of all cells`, res.cells ? "warn" : "good"),
+    stat("Complete rows", fmt(res.completeRows), `${fmtPct(pct(res.completeRows, res.rows))} have no gaps`,
+      res.completeRows === res.rows ? "good" : "", pct(res.completeRows, res.rows)),
+    stat("Columns with gaps", `${gappy.length} / ${res.columns.length}`,
+      gappy.length ? `${res.columns.length - gappy.length} complete` : "All complete", gappy.length ? "warn" : "good")
+  );
+  if (!gappy.length) return el("div", {}, tiles, el("div", { class: "note success", text: "No missing values in this dataset." }));
+
+  const byCol = card(
+    "By column",
+    el("div", { class: "bar-list" },
+      gappy.map((c) =>
+        el("div", { class: "bar-row" },
+          el("span", { class: "bar-label", text: c.name, title: c.name }),
+          bar(c.pct, c.pct >= 0.5 ? "danger" : "warn"),
+          el("span", { class: "bar-value", text: `${fmt(c.missing)} · ${fmtPct(c.pct * 100)}` }))))
+  );
+  const maxRows = Math.max(1, ...res.patterns.map((p) => p.rows));
+  const patterns = card(
+    "Common patterns",
+    el("p", { class: "card-hint", text: "Which columns tend to be missing together, by number of rows." }),
+    el("div", { class: "patterns" },
+      res.patterns.map((p) =>
+        el("div", { class: "pattern" },
+          el("div", { class: "pattern-head" },
+            chips(p.columns),
+            el("span", { class: "bar-value", text: plural(p.rows, "row") })),
+          bar(p.rows / maxRows))))
+  );
+  return el("div", {}, tiles, el("div", { class: "grid-2" }, byCol, patterns));
+}
+
+/* ---- Duplicates -------------------------------------------------------- */
+function viewDupes(res) {
+  const memory = (app.forms.dupes ||= {});
+  const controls = el("div", { class: "card" });
+  const fields = el("div", { class: "fields" });
+  let picked = [];
+  const values = buildForm(
+    fields,
+    [{ key: "columns", label: "Compare rows on these columns", type: "multi", options: allCols(), default: res.subset || [] }],
+    memory,
+    (v) => (picked = v.columns)
+  );
+  picked = values.columns;
+  controls.append(
+    el("h2", { text: "Match on" }),
+    el("p", { class: "card-hint", text: "Leave everything unticked to find whole-row copies. Tick columns (e.g. a name) to find rows that repeat those values." }),
+    fields,
+    el("div", { class: "row" },
+      el("button", { class: "btn btn-primary", onclick: () => { app.inspectParams.DUPES = { columns: picked }; renderInspect(); } },
+        icon("i-scan"), "Check duplicates"),
+      res.subset ? el("button", { class: "btn", onclick: () => { memory.columns = []; app.inspectParams.DUPES = {}; renderInspect(); } }, "Whole rows") : null)
+  );
+  const scope = res.subset ? `matching on ${res.subset.join(", ")}` : "whole-row copies";
+  const tiles = el(
+    "div",
+    { class: "stats" },
+    stat("Duplicate rows", fmt(res.extraRows), `Extra copies (${scope})`, res.extraRows ? "warn" : "good"),
+    stat("Rows involved", fmt(res.involvedRows), "Originals plus copies"),
+    stat("Duplicate groups", fmt(res.groups), "Distinct repeated values")
+  );
+  const out = el("div", {}, controls, tiles);
+  if (!res.extraRows) {
+    out.append(el("div", { class: "note success", text: `No duplicates found (${scope}).` }));
+    return out;
+  }
+  const wrap = el("div", { class: "table-wrap" });
+  renderTable(wrap, res.table, { types: true, indexLabel: "Row" });
+  out.append(
+    el("div", { class: "card card-flush" },
+      el("div", { class: "card-head" },
+        el("h2", { text: res.truncated ? "Duplicated rows (first 200)" : "Duplicated rows" }),
+        res.subset ? null : fixButton({ method: "REMOVE_DUPLICATES", label: "Remove duplicates" })),
+      wrap)
+  );
+  return out;
+}
+
+/* ---- Outliers ---------------------------------------------------------- */
+function viewOutliers(res) {
+  if (!res.columns.length) return el("div", { class: "note info", text: "No numeric columns with enough values to check." });
+  const flagged = res.columns.filter((c) => c.below + c.above > 0);
+  const rows = res.columns.map((c) =>
+    el(
+      "tr",
+      {},
+      el("td", { class: "col-name", text: c.name }),
+      el("td", { class: "num mono", text: `${fnum(c.lower)} … ${fnum(c.upper)}` }),
+      el("td", { class: "num mono muted", text: `${fnum(c.min)} … ${fnum(c.max)}` }),
+      el("td", { class: `num ${c.below ? "warn-text" : "muted"}`, text: fmt(c.below) }),
+      el("td", { class: `num ${c.above ? "warn-text" : "muted"}`, text: fmt(c.above) }),
+      el("td", {}, el("div", { class: "bar-cell" }, bar(c.pct, "warn"), el("span", { text: fmtPct(c.pct * 100) }))),
+      el("td", { class: "num", text: fmt(c.zscore) }),
+      el("td", { class: "mono muted", text: c.examples.map(fnum).join(", ") || "—" })
+    )
+  );
+  const headers = ["Column", "Normal range (IQR)", "Actual range", "Below", "Above", "Share", "|z| > 3", "Most extreme"];
+  return el(
+    "div",
+    {},
+    el("div", { class: "note info",
+      text: "IQR rule: values below Q1 − 1.5×IQR or above Q3 + 1.5×IQR. The z-score column counts values more than 3 standard deviations from the mean. Outliers are not always errors; check them before clipping." }),
+    el("div", { class: "card card-flush" },
+      el("div", { class: "card-head" },
+        el("h2", { text: flagged.length ? `${flagged.length} of ${res.columns.length} columns have outliers` : "No outliers found" }),
+        flagged.length ? fixButton({ method: "CLIP_IQR", label: "Clip with IQR" }) : null),
+      el("div", { class: "table-wrap" },
+        el("table", {},
+          el("thead", {}, el("tr", {}, headers.map((h, i) => el("th", { text: h, class: [1, 2, 3, 4, 6].includes(i) ? "num" : null })))),
+          el("tbody", {}, rows))))
+  );
+}
+
+/* ---- Correlations ------------------------------------------------------ */
+function strength(r) {
+  const a = Math.abs(r);
+  return a >= 0.8 ? "Very strong" : a >= 0.6 ? "Strong" : a >= 0.4 ? "Moderate" : a >= 0.2 ? "Weak" : "Negligible";
+}
+function viewCorr(res) {
+  const method = res.method;
+  const switcher = el(
+    "div",
+    { class: "segmented segmented-sm" },
+    [["pearson", "Pearson (linear)"], ["spearman", "Spearman (rank)"]].map(([m, label]) =>
+      el("button", {
+        "aria-selected": String(m === method),
+        onclick: () => { app.inspectParams.CORR = { method: m }; renderInspect(); },
+      }, label))
+  );
+  const toolbar = el(
+    "div",
+    { class: "toolbar" },
+    switcher,
+    el("button", { class: "btn btn-sm", onclick: () => { showSection("visualize"); selectChart("HEAT"); } },
+      icon("c-heat"), "Open heatmap")
+  );
+  if (res.columns < 2) return el("div", {}, toolbar, el("div", { class: "note info", text: "Need at least two numeric columns." }));
+  const rows = res.pairs.map((p) =>
+    el(
+      "div",
+      { class: "corr-row" },
+      el("div", { class: "corr-pair" },
+        el("span", { text: p.a, title: p.a }), el("span", { class: "muted", text: "↔" }), el("span", { text: p.b, title: p.b })),
+      el("div", { class: "corr-bar" },
+        el("span", { class: p.r < 0 ? "neg" : "pos", style: `width:${Math.abs(p.r) * 50}%` })),
+      el("span", { class: `corr-r ${p.r < 0 ? "neg" : "pos"}`, text: (p.r > 0 ? "+" : "") + p.r.toFixed(2) }),
+      el("span", { class: "corr-strength", text: strength(p.r) }),
+      el("span", { class: "corr-n muted", text: `n=${fmt(p.n)}` })
+    )
+  );
+  return el(
+    "div",
+    {},
+    toolbar,
+    el("div", { class: "card" },
+      el("h2", { text: `Strongest relationships${res.total > res.pairs.length ? ` (top ${res.pairs.length} of ${res.total})` : ""}` }),
+      el("p", { class: "card-hint", text: "−1 = move in opposite directions, +1 = move together, 0 = no relationship. Correlation is not causation." }),
+      el("div", { class: "corr-list" }, rows))
+  );
+}
+
+const INSPECT_VIEWS = {
+  QUALITY: viewQuality,
+  STRUCTURE: viewStructure,
+  STATS: viewStats,
+  MISSING: viewMissing,
+  DUPES: viewDupes,
+  OUTLIERS: viewOutliers,
+  CORR: viewCorr,
+};
+
+async function renderInspect() {
+  if (!app.state) return;
+  const kind = app.inspectKind;
+  const out = $("inspect-output");
+  syncInspectTabs();
+  app.inspectStale = false;
+  try {
+    const res = await call("inspect", { kind, params: app.inspectParams[kind] || {} });
+    if (kind !== app.inspectKind) return; // user switched tabs meanwhile
+    out.replaceChildren(INSPECT_VIEWS[kind](res));
+  } catch (err) {
+    out.replaceChildren(note("error", cleanError(err)));
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* clean                                                                */
+/* ------------------------------------------------------------------ */
+
+let cleanValues = {};
+
+const opInfo = (key) => {
+  for (const g of CLEAN_OPS) {
+    const item = g.items.find((i) => i.key === key);
+    if (item) return { ...item, group: g.group };
+  }
+  return { key, label: LEGACY_OPS[key] || key, desc: "", group: "" };
+};
+
+/* column option helpers (labels carry useful hints) */
+const colsWithMissing = () =>
+  app.state.columns.filter((c) => c.missing > 0).map((c) => ({ value: c.name, label: `${c.name} · ${fmt(c.missing)} missing` }));
+const textColOptions = () => categoricalCols();
+const numericColOptions = () => numericCols();
+
+const FILTER_OPS_NUMERIC = [
+  ["==", "equals"], ["!=", "does not equal"], [">", "greater than"], [">=", "at least"],
+  ["<", "less than"], ["<=", "at most"], ["is_missing", "is missing"], ["not_missing", "is not missing"],
+];
+const FILTER_OPS_TEXT = [
+  ["contains", "contains"], ["not_contains", "does not contain"], ["==", "equals"], ["!=", "does not equal"],
+  ["is_missing", "is missing"], ["not_missing", "is not missing"],
+];
+const toOptions = (pairs) => pairs.map(([value, label]) => ({ value, label }));
+
+function cleanSpecs(method, memory) {
+  const cols = allCols();
+  switch (method) {
+    case "REMOVE_DUPLICATES":
+      return [
+        { key: "columns", label: "Match on columns", type: "multi", options: cols, hint: "Leave empty to compare whole rows." },
+        { key: "keep", label: "Which copy to keep", type: "select",
+          options: toOptions([["first", "Keep the first occurrence"], ["last", "Keep the last occurrence"]]) },
+      ];
+    case "DROP_NA_ROWS":
+      return [{ key: "columns", label: "Only check these columns", type: "multi", options: colsWithMissing(),
+        hint: "Leave empty to drop rows missing any value." }];
+    case "FILTER_ROWS": {
+      const column = cols.includes(memory.column) ? memory.column : cols[0];
+      const numeric = numericCols().includes(column);
+      const ops = numeric ? FILTER_OPS_NUMERIC : FILTER_OPS_TEXT;
+      const op = ops.some(([v]) => v === memory.operator) ? memory.operator : ops[0][0];
+      const specs = [
+        { key: "mode", label: "Action", type: "select",
+          options: toOptions([["keep", "Keep rows where…"], ["remove", "Remove rows where…"]]) },
+        { key: "column", label: "Column", type: "select", options: cols, rerender: true },
+        { key: "operator", label: "Condition", type: "select", options: toOptions(ops), rerender: true },
+      ];
+      if (op !== "is_missing" && op !== "not_missing") {
+        specs.push({ key: "value", label: numeric ? "Number" : "Text", type: "text",
+          hint: numeric ? null : "Not case-sensitive for contains." });
+      }
+      return specs;
+    }
+    case "SORT_ROWS":
+      return [
+        { key: "column", label: "Sort by", type: "select", options: cols },
+        { key: "ascending", label: "Order", type: "select",
+          options: toOptions([["true", "Ascending (A→Z, 0→9)"], ["false", "Descending (Z→A, 9→0)"]]) },
+      ];
+    case "FILL_NA": {
+      const specs = [
+        { key: "columns", label: "Columns to fill", type: "multi", options: colsWithMissing(),
+          default: colsWithMissing().map((o) => o.value) },
+        { key: "strategy", label: "Fill with", type: "select", rerender: true,
+          options: toOptions([
+            ["median", "Median (numbers, robust to outliers)"], ["mean", "Mean (numbers)"],
+            ["mode", "Most common value"], ["constant", "A fixed value…"],
+            ["ffill", "Previous row's value"], ["bfill", "Next row's value"],
+          ]) },
+      ];
+      if (memory.strategy === "constant") specs.push({ key: "value", label: "Value", type: "text" });
+      return specs;
+    }
+    case "STRIP_WHITESPACE":
+      return [{ key: "columns", label: "Text columns", type: "multi", options: textColOptions(),
+        hint: "Leave empty for all text columns." }];
+    case "NORMALIZE_TEXT":
+      return [
+        { key: "columns", label: "Text columns", type: "multi", options: textColOptions() },
+        { key: "case", label: "Letter case", type: "select",
+          options: toOptions([["none", "Keep as is"], ["title", "Title Case"], ["lower", "lowercase"], ["upper", "UPPERCASE"]]) },
+      ];
+    case "CLIP_IQR":
+    case "CLIP_ZSCORE":
+      return [{ key: "columns", label: "Numeric columns", type: "multi", options: numericColOptions(),
+        hint: "Leave empty for all numeric columns." }];
+    case "ROUND":
+      return [
+        { key: "columns", label: "Numeric columns", type: "multi", options: numericColOptions() },
+        { key: "decimals", label: "Decimal places", type: "text", default: "2" },
+      ];
+    case "TO_NUMERIC":
+      return [{ key: "columns", label: "Columns", type: "multi", options: textColOptions(),
+        hint: "Commas, spaces, currency and % signs are removed first. Values that still aren't numbers become missing." }];
+    case "TO_DATETIME":
+      return [
+        { key: "columns", label: "Columns", type: "multi", options: textColOptions(),
+          hint: "Values that aren't dates become missing." },
+        { key: "dayfirst", label: "Ambiguous dates like 03/04", type: "select",
+          options: toOptions([["false", "Month first (March 4)"], ["true", "Day first (3 April)"]]) },
+      ];
+    case "RENAME_COLUMN":
+      return [
+        { key: "old_name", label: "Column to rename", type: "select", options: cols },
+        { key: "new_name", label: "New name", type: "text" },
+      ];
+    case "CHANGE_DTYPE":
+      return [
+        { key: "column", label: "Column", type: "select", options: cols },
+        { key: "dtype", label: "Target type", type: "select", options: DTYPE_OPTIONS },
+      ];
+    case "DROP_COLUMNS":
+      return [{ key: "columns", label: "Columns to drop", type: "multi", options: cols }];
+    case "REPLACE_VALUES":
+      return [
+        { key: "column", label: "Column", type: "select", options: cols },
+        { key: "find", label: "Find value", type: "text" },
+        { key: "replace", label: "Replace with", type: "text", hint: "Leave empty to mark as missing." },
+      ];
+    default:
+      return [];
+  }
+}
+
+const OPTIONAL_COLUMNS = new Set(["REMOVE_DUPLICATES", "DROP_NA_ROWS", "STRIP_WHITESPACE", "CLIP_IQR", "CLIP_ZSCORE"]);
+
+function cleanParams(method, v) {
+  const p = { ...v };
+  if (Array.isArray(p.columns) && p.columns.length === 0 && OPTIONAL_COLUMNS.has(method)) delete p.columns;
+  if (method === "RENAME_COLUMN") p.new_name = (p.new_name || "").trim();
+  if (method === "FILTER_ROWS" && (p.operator === "is_missing" || p.operator === "not_missing")) p.value = "";
+  if (method === "FILL_NA" && p.strategy !== "constant") delete p.value;
+  for (const k of ["find", "replace", "value"]) if (k in p && p[k] == null) p[k] = "";
+  return p;
+}
+
+/** Returns a reason string when the form is incomplete, otherwise "". */
+function cleanInvalid(method, v) {
+  if (!method) return "Choose an operation.";
+  const needCols = ["NORMALIZE_TEXT", "ROUND", "TO_NUMERIC", "TO_DATETIME", "DROP_COLUMNS", "FILL_NA"];
+  if (needCols.includes(method) && !(v.columns && v.columns.length)) return "Select at least one column.";
+  if (method === "FILL_NA" && v.strategy === "constant" && !v.value) return "Enter the value to fill with.";
+  if (method === "FILTER_ROWS" && !["is_missing", "not_missing"].includes(v.operator) && !v.value)
+    return "Enter a value for the condition.";
+  if (method === "RENAME_COLUMN") {
+    const name = (v.new_name || "").trim();
+    if (!name) return "Enter a new name.";
+    if (name === v.old_name) return "The new name is the same as the old one.";
+  }
+  if (method === "REPLACE_VALUES" && !v.find) return "Enter the value to find.";
+  return "";
+}
+
+function renderOpList() {
+  $("op-list").replaceChildren(
+    ...CLEAN_OPS.map((g) =>
+      el(
+        "div",
+        { class: "op-group-block" },
+        el("div", { class: "op-group-title" }, icon(g.icon), g.group),
+        g.items.map((i) =>
+          el("button", {
+            class: `op-item ${i.key === app.cleanMethod ? "active" : ""}`,
+            "aria-current": i.key === app.cleanMethod ? "true" : null,
+            onclick: () => selectCleanMethod(i.key),
+            text: i.label,
+          })
+        )
+      )
+    )
+  );
+}
+
+function selectCleanMethod(method) {
+  app.cleanMethod = method;
+  renderOpList();
+  renderCleanFields();
+}
+
+function renderCleanFields() {
+  const method = app.cleanMethod;
+  $("op-empty").hidden = !!method;
+  $("op-body").hidden = !method;
+  if (!method) return;
+  const info = opInfo(method);
+  $("op-group").textContent = info.group;
+  $("op-title").textContent = info.label;
+  $("clean-desc").textContent = info.desc;
+
+  const memory = (app.forms.clean[method] ||= {});
+  const specs = cleanSpecs(method, memory);
+  const rerenderKeys = new Set(specs.filter((s) => s.rerender).map((s) => s.key));
+  const update = (values, changedKey) => {
+    cleanValues = values;
+    if (changedKey && rerenderKeys.has(changedKey)) {
+      renderCleanFields(); // fields depend on this choice
+      return;
+    }
+    schedulePreview();
+  };
+  cleanValues = buildForm($("clean-fields"), specs, memory, update);
+  if (!specs.length) $("clean-fields").replaceChildren(el("p", { class: "muted no-inputs", text: "No settings needed." }));
+  schedulePreview(0);
+}
+
+/* ---- live impact preview -------------------------------------------- */
+
+let previewTimer = null;
+let previewSeq = 0;
+
+function schedulePreview(delay = 280) {
+  clearTimeout(previewTimer);
+  const method = app.cleanMethod;
+  const reason = cleanInvalid(method, cleanValues);
+  $("btn-do").disabled = true;
+  if (reason) {
+    renderImpact({ state: "idle", text: reason });
+    return;
+  }
+  renderImpact({ state: "loading" });
+  previewTimer = setTimeout(runPreview, delay);
+}
+
+async function runPreview() {
+  const seq = ++previewSeq;
+  const method = app.cleanMethod;
+  try {
+    // Not wrapped in withBusy: previews run in the background while typing.
+    const res = await window.api.call("preview", { method, params: cleanParams(method, cleanValues) });
+    if (seq !== previewSeq) return;
+    const noChange =
+      res.removedRows === 0 && res.changedCells === 0 && !res.removedColumns.length && !res.addedColumns.length &&
+      !res.dtypeChanges.length && !res.orderSample;
+    renderImpact({ state: "ready", res, noChange });
+    $("btn-do").disabled = noChange;
+  } catch (err) {
+    if (seq !== previewSeq) return;
+    renderImpact({ state: "error", text: cleanError(err) });
+    $("btn-do").disabled = true;
+  }
+}
+
+function changeTable(changes) {
+  const head = el("tr", {}, el("th", { class: "idx", text: "Row" }), changes.columns.map((c) => el("th", { text: c })));
+  const body = changes.rows.map((r) =>
+    el(
+      "tr",
+      {},
+      el("td", { class: "idx", text: r.row }),
+      r.cells.map((cell) => {
+        const show = (v) => (v == null ? "NaN" : v);
+        if (!cell.changed) return el("td", { class: "muted", text: show(cell.before) });
+        return el(
+          "td",
+          { class: "diff-cell", title: `${show(cell.before)} → ${show(cell.after)}` },
+          el("span", { class: `diff-before ${cell.before == null ? "null" : ""}`, text: show(cell.before) }),
+          el("span", { class: "diff-arrow", text: "→" }),
+          el("span", { class: `diff-after ${cell.after == null ? "null" : ""}`, text: show(cell.after) })
+        );
+      })
+    )
+  );
+  return el("div", { class: "table-wrap impact-table" }, el("table", {}, el("thead", {}, head), el("tbody", {}, body)));
+}
+
+function renderImpact({ state, res, text, noChange }) {
+  const box = $("impact");
+  box.className = `impact ${state}`;
+  if (state === "idle") {
+    box.replaceChildren(el("div", { class: "impact-idle" }, el("span", { class: "impact-dot" }), text));
+    return;
+  }
+  if (state === "loading") {
+    box.replaceChildren(el("div", { class: "impact-idle" }, el("span", { class: "impact-dot pulse" }), "Calculating impact…"));
+    return;
+  }
+  if (state === "error") {
+    box.replaceChildren(note("error", text));
+    return;
+  }
+  if (noChange) {
+    box.replaceChildren(note("info", "Nothing would change. The data already meets this condition."));
+    return;
+  }
+
+  const [rb, ra] = res.rows;
+  const [cb, ca] = res.cols;
+  const nCols = Object.keys(res.changedByColumn).length;
+  const pills = [];
+  if (res.removedRows) pills.push(el("span", { class: "impact-pill bad", text: `−${fmt(res.removedRows)} rows` }));
+  if (res.removedColumns.length) pills.push(el("span", { class: "impact-pill bad", text: `−${res.removedColumns.length} col` }));
+  if (res.addedColumns.length) pills.push(el("span", { class: "impact-pill good", text: `+${res.addedColumns.length} col` }));
+  if (res.changedCells) pills.push(el("span", { class: "impact-pill", text: `${fmt(res.changedCells)} cells changed in ${plural(nCols, "column")}` }));
+  for (const d of res.dtypeChanges) pills.push(el("span", { class: "impact-pill mono", text: `${d.column}: ${d.before} → ${d.after}` }));
+  if (res.orderSample) pills.push(el("span", { class: "impact-pill", text: "Row order changes" }));
+
+  const parts = [
+    el(
+      "div",
+      { class: "impact-head" },
+      el("div", { class: "impact-label", text: "Preview" }),
+      el("div", { class: "impact-msg", text: res.message }),
+      el("div", { class: "impact-shape mono", text: `${fmt(rb)} × ${cb}  →  ${fmt(ra)} × ${ca}` })
+    ),
+    el("div", { class: "impact-pills" }, pills),
+  ];
+  if (res.changes.rows.length) {
+    parts.push(el("div", { class: "impact-sub", text: `Changed cells (first ${res.changes.rows.length} rows)` }), changeTable(res.changes));
+  }
+  if (res.removedSample) {
+    const wrap = el("div", { class: "table-wrap impact-table" });
+    renderTable(wrap, res.removedSample, { indexLabel: "Row" });
+    parts.push(el("div", { class: "impact-sub", text: `Rows that will be removed (first ${res.removedSample.data.length})` }), wrap);
+  }
+  if (res.orderSample) {
+    const wrap = el("div", { class: "table-wrap impact-table" });
+    renderTable(wrap, res.orderSample, { indexLabel: "Row" });
+    parts.push(el("div", { class: "impact-sub", text: "New order (first rows)" }), wrap);
+  }
+  if (res.code) {
+    parts.push(el("details", { class: "impact-code" }, el("summary", { text: "pandas code for this step" }), el("pre", { class: "code-block", text: res.code })));
+  }
+  box.replaceChildren(...parts);
+}
+
+async function doClean() {
+  const method = app.cleanMethod;
+  if (!method || $("btn-do").disabled) return;
+  try {
+    const res = await call("clean", { method, params: cleanParams(method, cleanValues) });
+    // Clear free-text inputs after a successful operation.
+    const mem = app.forms.clean[method] || {};
+    for (const k of ["new_name", "find", "replace", "value"]) delete mem[k];
+    setState(res.state);
+    toast("success", res.message);
+  } catch (err) {
+    toast("error", cleanError(err));
+  }
+}
+
+async function undo() {
+  try {
+    const res = await call("undo");
+    setState(res.state);
+    toast("success", res.message);
+  } catch (err) {
+    toast("error", cleanError(err));
+  }
+}
+
+async function revertTo(keep) {
+  try {
+    const res = await call("revert", { keep });
+    setState(res.state);
+    toast("success", res.message);
+  } catch (err) {
+    toast("error", cleanError(err));
+  }
+}
+
+/** Button that needs a second click within 3 s to run (no blocking confirm dialogs). */
+function confirmButton(label, confirmLabel, onConfirm) {
+  let armed = null;
+  const btn = el("button", { class: "btn btn-sm btn-ghost tl-revert" }, icon("i-revert"), el("span", { text: label }));
+  btn.addEventListener("click", () => {
+    if (armed) {
+      clearTimeout(armed);
+      onConfirm();
+      return;
+    }
+    btn.classList.add("armed");
+    btn.querySelector("span").textContent = confirmLabel;
+    armed = setTimeout(() => {
+      armed = null;
+      btn.classList.remove("armed");
+      btn.querySelector("span").textContent = label;
+    }, 3000);
+  });
+  return btn;
+}
+
+function renderHistory() {
+  const log = app.state.log;
+  $("history-summary").textContent = log.length ? `History · ${plural(log.length, "step")}` : "History";
+  $("btn-code").disabled = !log.length;
+  const list = $("history-list");
+  list.replaceChildren();
+  const chip = (label, n) =>
+    el("span", { class: `delta-chip ${n > 0 ? "up" : ""}`, text: `${n > 0 ? "+" : "−"}${fmt(Math.abs(n))} ${label}` });
+
+  [...log].reverse().forEach((entry, i) => {
+    const dRows = entry.shape_after[0] - entry.shape_before[0];
+    const dCols = entry.shape_after[1] - entry.shape_before[1];
+    const chips = [];
+    if (dRows) chips.push(chip("rows", dRows));
+    if (dCols) chips.push(chip("cols", dCols));
+    const current = i === 0;
+    list.append(
+      el(
+        "li",
+        { class: current ? "current" : null },
+        el("div", { class: "tl-top" },
+          el("span", { class: "tl-step", text: `Step ${entry.step} · ${opInfo(entry.method).label}` }),
+          current
+            ? el("span", { class: "tl-now", text: "Current" })
+            : confirmButton("Revert here", "Click to confirm", () => revertTo(entry.step))),
+        el("div", { class: "tl-msg", text: entry.msg }),
+        chips.length ? el("div", { class: "tl-delta" }, chips) : null
+      )
+    );
+  });
+
+  const [r0, c0] = log.length ? log[0].shape_before : app.state.shape;
+  list.append(
+    el(
+      "li",
+      { class: `origin ${log.length ? "" : "current"}` },
+      el("div", { class: "tl-top" },
+        el("span", { class: "tl-step", text: "Original data" }),
+        log.length ? confirmButton("Reset", "Click to confirm", () => revertTo(0)) : el("span", { class: "tl-now", text: "Current" })),
+      el("div", { class: "tl-msg muted", text: `${app.state.fileName} · ${plural(r0, "row")} × ${plural(c0, "column")}` })
+    )
+  );
+}
+
+function openCodeDialog(title, sub, code, fileName) {
+  app.script = { code, fileName };
+  $("code-title").textContent = title;
+  $("code-sub").textContent = sub;
+  $("code-text").textContent = code;
+  $("code-dialog").showModal();
+}
+
+async function showCode() {
+  try {
+    const res = await call("script");
+    openCodeDialog("Cleaning steps as pandas code", "Run it next to your CSV to reproduce the exact same result.", res.code, res.fileName);
+  } catch (err) {
+    toast("error", cleanError(err));
+  }
+}
+
+function renderPreview() {
+  const preview = app.state.preview;
+  $("preview").hidden = !preview;
+  if (!preview) return;
+  const label = (name, shape) => `${name} · ${plural(shape[0], "row")} × ${plural(shape[1], "col")}`;
+  $("preview-before-title").textContent = label("Before", preview.before.shape);
+  $("preview-after-title").textContent = label("After", preview.after.shape);
+  renderTable($("preview-before"), preview.before.table);
+  renderTable($("preview-after"), preview.after.table, { types: true });
+}
+
+/* ------------------------------------------------------------------ */
+/* visualize                                                            */
+/* ------------------------------------------------------------------ */
+
+let chartValues = {};
+
+const datetimeCols = () => app.state.columns.filter((c) => c.dtype.startsWith("datetime")).map((c) => c.name);
+function uniqueOf(name) {
+  const p = app.state.profile;
+  const iCol = p.columns.indexOf("Column");
+  const iUni = p.columns.indexOf("Unique");
+  const row = p.data.find((r) => String(r[iCol]) === name);
+  return row ? row[iUni] : 0;
+}
+/** Text columns that make sensible groups (2–50 distinct values), most useful first. */
+const groupCols = () =>
+  categoricalCols()
+    .filter((c) => uniqueOf(c) >= 2 && uniqueOf(c) <= 50)
+    .sort((a, b) => missingOf(a) - missingOf(b) || uniqueOf(a) - uniqueOf(b));
+
+const TOGGLE = (key, label, def = false, hint) => ({ key, label, type: "toggle", default: def, hint });
+const TITLE = { key: "title", label: "Title (optional)", type: "text" };
+
+function chartSpecs(kind, memory) {
+  const num = numericCols();
+  const cat = categoricalCols();
+  const groups = groupCols();
+  const none = { value: "", label: "None" };
+  const hueOpts = [none, ...groups];
+  switch (kind) {
+    case "HIST":
+      if (!num.length) return { error: "No numeric columns to draw a histogram." };
+      return { fields: [
+        { key: "column", label: "Column", type: "select", options: num },
+        { key: "bins", label: "Bins", type: "select", options: toOptions([["auto", "Automatic"], ["10", "10"], ["20", "20"], ["30", "30"], ["50", "50"]]) },
+        { key: "hue", label: "Split by", type: "select", options: hueOpts },
+        TOGGLE("kde", "Smooth density curve", true),
+        TITLE,
+      ] };
+    case "BOX":
+      if (!num.length) return { error: "Need at least one numeric column for a box plot." };
+      return { fields: [
+        { key: "y", label: "Values", type: "select", options: num },
+        { key: "x", label: "Group by", type: "select", options: [none, ...groups], default: groups[0] || "" },
+        { key: "top_n", label: "Max groups", type: "select", options: ["5", "8", "12", "20"], default: "12" },
+        TOGGLE("log", "Log scale", false, "Helps when a few values are much larger than the rest."),
+        TITLE,
+      ] };
+    case "SCAT":
+      if (num.length < 2) return { error: "Need at least two numeric columns for a scatter plot." };
+      return { fields: [
+        { key: "x", label: "X axis", type: "select", options: num, default: num[0] },
+        { key: "y", label: "Y axis", type: "select", options: num, default: num[1] },
+        { key: "hue", label: "Color by", type: "select", options: hueOpts },
+        TOGGLE("trend", "Trend line", true),
+        TOGGLE("log_x", "Log scale on X"),
+        TOGGLE("log_y", "Log scale on Y"),
+        TITLE,
+      ] };
+    case "HEAT":
+      if (num.length < 2) return { error: "Need at least two numeric columns for a correlation heatmap." };
+      return { fields: [
+        { key: "columns", label: "Columns", type: "multi", options: num, default: num.slice(0, 12) },
+        { key: "method", label: "Method", type: "select", options: toOptions([["pearson", "Pearson (linear)"], ["spearman", "Spearman (rank)"]]) },
+        TITLE,
+      ] };
+    case "LINE": {
+      if (!num.length) return { error: "Need a numeric column for the Y axis." };
+      const dts = datetimeCols();
+      const x = allCols().includes(memory.x) ? memory.x : dts[0] || allCols()[0];
+      const fields = [
+        { key: "x", label: "X axis", type: "select", options: allCols(), default: x, rerender: true,
+          hint: dts.length ? null : "Tip: convert a date column in Clean → Convert to date to get time grouping." },
+        { key: "y", label: "Y axis", type: "select", options: num },
+      ];
+      if (dts.includes(x)) {
+        fields.push({ key: "freq", label: "Group dates by", type: "select", default: "M",
+          options: toOptions([["D", "Day"], ["W", "Week"], ["M", "Month"], ["Q", "Quarter"], ["Y", "Year"]]) });
+      }
+      fields.push({ key: "agg", label: "Combine values with", type: "select",
+        options: toOptions([["mean", "Mean"], ["sum", "Sum"], ["median", "Median"], ["count", "Count"], ["min", "Min"], ["max", "Max"], ["none", "Don't combine (raw)"]]) });
+      fields.push(TITLE);
+      return { fields };
+    }
+    case "BAR": {
+      if (!cat.length) return { error: "Need a text or category column for the bars." };
+      const fields = [
+        { key: "x", label: "Bars (categories)", type: "select", options: cat, default: groups[0] },
+        { key: "y", label: "Bar height", type: "select", options: [{ value: "", label: "Number of rows" }, ...num], default: num[0] || "", rerender: true },
+      ];
+      if (memory.y !== "" && num.length) {
+        fields.push({ key: "agg", label: "Combine with", type: "select",
+          options: toOptions([["mean", "Mean"], ["sum", "Sum"], ["median", "Median"], ["min", "Min"], ["max", "Max"]]) });
+      }
+      fields.push(
+        { key: "top_n", label: "Show top", type: "select", options: ["5", "10", "15", "25", "50"], default: "15" },
+        { key: "sort", label: "Order", type: "select", options: toOptions([["desc", "Largest first"], ["asc", "Smallest first"], ["label", "Alphabetical"]]) },
+        { key: "horizontal", label: "Direction", type: "select", options: toOptions([["auto", "Automatic"], ["true", "Horizontal bars"], ["false", "Vertical bars"]]) },
+        TOGGLE("labels", "Value labels", true),
+        TITLE
+      );
+      return { fields };
+    }
+    case "COUNT":
+      return { fields: [
+        { key: "column", label: "Column", type: "select", options: allCols(), default: groups[0] || cat[0] },
+        { key: "top_n", label: "Show top", type: "select", options: ["5", "10", "15", "25", "50"], default: "15" },
+        { key: "sort", label: "Order", type: "select", options: toOptions([["desc", "Most common first"], ["asc", "Least common first"], ["label", "Alphabetical"]]) },
+        { key: "horizontal", label: "Direction", type: "select", options: toOptions([["auto", "Automatic"], ["true", "Horizontal bars"], ["false", "Vertical bars"]]) },
+        TOGGLE("percent", "Show percentages"),
+        TITLE,
+      ] };
+    case "PAIR":
+      if (num.length < 2) return { error: "Need at least two numeric columns for a pair plot." };
+      return { fields: [
+        { key: "columns", label: "Columns", type: "multi", options: num, default: num.slice(0, 4) },
+        { key: "hue", label: "Color by", type: "select", options: hueOpts },
+        TITLE,
+      ] };
+    default:
+      return { fields: [] };
+  }
+}
+
+function chartParams(kind, v) {
+  const p = { ...v };
+  if ("horizontal" in p) p.horizontal = p.horizontal === "auto" ? "auto" : p.horizontal === "true";
+  if (kind === "BAR" && !p.y) delete p.agg;
+  if (kind === "LINE" && !datetimeCols().includes(p.x)) delete p.freq;
+  for (const k of Object.keys(p)) if (p[k] === "" || p[k] == null) delete p[k];
+  return p;
+}
+
+function chartInvalid(kind, v) {
+  if ((kind === "HEAT" || kind === "PAIR") && !(v.columns && v.columns.length >= 2)) return "Select at least two columns.";
+  if (kind === "SCAT" && v.x === v.y) return "Choose two different columns.";
+  return "";
+}
+
+function renderChartTiles() {
+  $("chart-types").replaceChildren(
+    ...CHART_TYPES.map((t) =>
+      el("button", {
+        class: "chart-tile",
+        role: "radio",
+        "aria-checked": String(t.kind === app.chartKind),
+        title: t.hint,
+        onclick: () => selectChart(t.kind),
+      }, icon(t.icon), t.label)
+    )
+  );
+}
+
+function selectChart(kind, params) {
+  if (params) app.forms.chart[kind] = { ...params };
+  app.chartKind = kind;
+  renderChartTiles();
+  renderChartFields(true);
+}
+
+const chartLabel = () => (CHART_TYPES.find((t) => t.kind === app.chartKind) || { label: "Chart" }).label;
+
+function chartSubtitle(kind, v) {
+  const by = (a, b) => (b ? `${a} by ${b}` : a);
+  switch (kind) {
+    case "HIST": return by(v.column, v.hue);
+    case "BOX": return by(v.y, v.x);
+    case "SCAT": return `${v.y} vs ${v.x}${v.hue ? `, colored by ${v.hue}` : ""}`;
+    case "HEAT": return `${(v.columns || []).length} columns · ${v.method || "pearson"}`;
+    case "LINE": return `${v.agg && v.agg !== "none" ? `${v.agg} of ` : ""}${v.y} over ${v.x}`;
+    case "BAR": return v.y ? `${v.agg || "mean"} of ${v.y} by ${v.x}` : `rows per ${v.x}`;
+    case "COUNT": return `values in ${v.column}`;
+    case "PAIR": return (v.columns || []).join(", ");
+    default: return "";
+  }
+}
+
+/** Build the settings form. Renders only when the Visualize screen is visible. */
+function renderChartFields(render = false) {
+  const kind = app.chartKind;
+  $("chart-config").hidden = !kind;
+  if (!kind) {
+    renderChartEmpty();
+    return;
+  }
+  const memory = (app.forms.chart[kind] ||= {});
+  const spec = chartSpecs(kind, memory);
+  if (spec.error) {
+    $("chart-fields").replaceChildren(note("warn", spec.error));
+    showChartMessage("warn", spec.error);
+    return;
+  }
+  const rerenderKeys = new Set(spec.fields.filter((f) => f.rerender).map((f) => f.key));
+  const update = (values, changedKey) => {
+    chartValues = values;
+    if (changedKey && rerenderKeys.has(changedKey)) {
+      renderChartFields(true);
+      return;
+    }
+    scheduleRender(changedKey === "title" ? 650 : 300);
+  };
+  chartValues = buildForm($("chart-fields"), spec.fields, memory, update);
+  if (render || app.section === "visualize") scheduleRender(0);
+  else app.chartStale = true;
+}
+
+/* ---- rendering ------------------------------------------------------ */
+
+let renderTimer = null;
+let renderSeq = 0;
+
+function scheduleRender(delay = 300) {
+  clearTimeout(renderTimer);
+  const reason = chartInvalid(app.chartKind, chartValues);
+  if (reason) {
+    showChartMessage("info", reason);
+    return;
+  }
+  renderTimer = setTimeout(generateChart, delay);
+}
+
+/** Theme colours handed to Matplotlib so charts match the UI. */
+function chartStyle() {
+  const css = getComputedStyle(document.documentElement);
+  const v = (name) => css.getPropertyValue(name).trim();
+  return {
+    surface: v("--surface"),
+    text: v("--text"),
+    muted: v("--muted"),
+    border: v("--border"),
+    positive: v("--primary"),
+    negative: v("--danger"),
+    palette: [1, 2, 3, 4, 5, 6].map((i) => v(`--chart-${i}`)),
+  };
+}
+
+function setChartHeading(kind, values) {
+  $("viz-kind").textContent = kind ? chartLabel() : "No chart yet";
+  $("viz-sub").textContent = kind ? chartSubtitle(kind, values) : "";
+}
+
+function showChartMessage(kind, text) {
+  $("viz-loading").hidden = true;
+  $("viz-actions").hidden = true;
+  $("viz-insights").hidden = true;
+  app.chartImage = null;
+  setChartHeading(app.chartKind, chartValues);
+  $("chart-output").replaceChildren(el("div", { class: "viz-message" }, note(kind, text)));
+}
+
+async function generateChart() {
+  if (!app.state || !app.chartKind) return;
+  const seq = ++renderSeq;
+  const kind = app.chartKind;
+  const params = chartParams(kind, chartValues);
+  app.chartStale = false;
+  $("viz-loading").hidden = false;
+  $("chart-stage").classList.add("busy-stage");
+  try {
+    const width = Math.max(600, $("chart-stage").clientWidth - 32);
+    const res = await window.api.call("plot", { kind, params, style: chartStyle(), width });
+    if (seq !== renderSeq) return; // a newer render is on its way
+    app.chartImage = res.image;
+    app.chartCode = res.code;
+    app.chartParams = params;
+    setChartHeading(kind, chartValues);
+    $("chart-output").replaceChildren(el("img", { src: res.image, alt: `${chartLabel()}: ${chartSubtitle(kind, chartValues)}` }));
+    renderInsights(res.insights, res.notes);
+    $("viz-actions").hidden = false;
+    rememberChart(kind, { ...chartValues }, res.image);
+  } catch (err) {
+    if (seq !== renderSeq) return;
+    showChartMessage("error", cleanError(err));
+  } finally {
+    if (seq === renderSeq) {
+      $("viz-loading").hidden = true;
+      $("chart-stage").classList.remove("busy-stage");
+    }
+  }
+}
+
+function renderInsights(insights, notes) {
+  const box = $("viz-insights");
+  box.hidden = !insights.length && !notes.length;
+  box.replaceChildren(
+    ...[
+    insights.length
+      ? el("div", { class: "insights" },
+          el("div", { class: "insights-title" }, icon("i-bulb"), "What this shows"),
+          el("ul", {}, insights.map((t) => el("li", { text: t }))))
+      : null,
+    notes.length ? el("div", { class: "chart-footnotes" }, notes.map((t) => el("p", { text: t }))) : null,
+    ].filter(Boolean)
+  );
+}
+
+/* ---- empty state with suggestions ---------------------------------- */
+
+function chartSuggestions() {
+  const num = numericCols();
+  const groups = groupCols();
+  const dts = datetimeCols();
+  const out = [];
+  const spread = [...num].sort((a, b) => uniqueOf(b) - uniqueOf(a));
+  if (spread[0]) out.push({ kind: "HIST", text: `Distribution of ${spread[0]}`, params: { column: spread[0] } });
+  if (groups[0]) out.push({ kind: "COUNT", text: `Most common ${groups[0]}`, params: { column: groups[0] } });
+  if (num[0] && groups[0]) out.push({ kind: "BOX", text: `${num[0]} across ${groups[0]}`, params: { y: num[0], x: groups[0] } });
+  if (num.length >= 2) out.push({ kind: "SCAT", text: `${spread[1] || num[1]} vs ${spread[0]}`, params: { x: spread[0], y: spread[1] || num[1] } });
+  if (dts[0] && num[0]) out.push({ kind: "LINE", text: `${num[0]} over time`, params: { x: dts[0], y: num[0], freq: "M" } });
+  if (num.length >= 3) out.push({ kind: "HEAT", text: "How numeric columns relate", params: {} });
+  return out.slice(0, 5);
+}
+
+function renderChartEmpty() {
+  app.chartImage = null;
+  $("viz-actions").hidden = true;
+  $("viz-insights").hidden = true;
+  setChartHeading("", {});
+  const ideas = app.state ? chartSuggestions() : [];
+  $("chart-output").replaceChildren(
+    el("div", { class: "viz-empty" },
+      el("div", { class: "viz-empty-icon" }, icon("i-chart")),
+      el("h2", { text: "Pick a chart type" }),
+      el("p", { text: ideas.length ? "Or start from a suggestion based on your columns:" : "Choose one on the left." }),
+      ideas.length
+        ? el("div", { class: "suggestions" },
+            ideas.map((s) => {
+              const t = CHART_TYPES.find((c) => c.kind === s.kind);
+              return el("button", { class: "suggestion", onclick: () => selectChart(s.kind, s.params) },
+                icon(t.icon), el("span", {}, el("strong", { text: t.label }), el("span", { text: s.text })));
+            }))
+        : null)
+  );
+}
+
+/* ---- recent charts --------------------------------------------------- */
+
+function rememberChart(kind, values, image) {
+  const key = JSON.stringify([kind, values]);
+  app.recent = (app.recent || []).filter((r) => r.key !== key);
+  app.recent.unshift({ key, kind, values, image, sub: chartSubtitle(kind, values) });
+  app.recent = app.recent.slice(0, 8);
+  renderRecent();
+}
+
+function renderRecent() {
+  const list = app.recent || [];
+  $("recent-charts").hidden = list.length < 2;
+  $("recent-list").replaceChildren(
+    ...list.map((r, i) =>
+      el("button", {
+        class: `recent-item ${i === 0 ? "current" : ""}`,
+        title: `${CHART_TYPES.find((t) => t.kind === r.kind).label}: ${r.sub}`,
+        onclick: () => selectChart(r.kind, r.values),
+      },
+      el("img", { src: r.image, alt: "" }),
+      el("span", { text: r.sub }))
+    )
+  );
+}
+
+/* ---- export ---------------------------------------------------------- */
+
+const chartFileName = (ext) =>
+  `${[chartLabel(), chartSubtitle(app.chartKind, chartValues)].join(" ").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 60)}.${ext}`;
+
+async function saveChart() {
+  if (!app.chartImage) return;
+  try {
+    const res = await window.api.saveImage(app.chartImage, chartFileName("png"));
+    if (res) toast("success", `Saved ${res.path}`);
+  } catch (err) {
+    toast("error", cleanError(err));
+  }
+}
+
+async function saveChartSvg() {
+  if (!app.chartImage) return;
+  try {
+    const res = await call("plot", { kind: app.chartKind, params: app.chartParams, style: chartStyle(), width: $("chart-stage").clientWidth, fmt: "svg" });
+    const saved = await window.api.saveText(res.svg, chartFileName("svg"));
+    if (saved) toast("success", `Saved ${saved.path}`);
+  } catch (err) {
+    toast("error", cleanError(err));
+  }
+}
+
+async function copyChart() {
+  if (!app.chartImage) return;
+  try {
+    await window.api.copyImage(app.chartImage);
+    toast("success", "Chart copied. Paste it into a document or chat.");
+  } catch (err) {
+    toast("error", cleanError(err));
+  }
+}
+
+function showChartCode() {
+  if (!app.chartCode) return;
+  openCodeDialog("Chart as Python code", "Recreates this chart with pandas, matplotlib and seaborn.", app.chartCode, chartFileName("py"));
+}
+
+/* ------------------------------------------------------------------ */
+/* wiring                                                               */
+/* ------------------------------------------------------------------ */
+
+$("btn-open").addEventListener("click", openCsv);
+$("btn-open-empty").addEventListener("click", openCsv);
+$("btn-export").addEventListener("click", exportCsv);
+$("btn-undo").addEventListener("click", undo);
+$("btn-undo-2").addEventListener("click", undo);
+$("btn-do").addEventListener("click", doClean);
+$("btn-save-chart").addEventListener("click", saveChart);
+$("btn-save-svg").addEventListener("click", saveChartSvg);
+$("btn-copy-chart").addEventListener("click", copyChart);
+$("btn-chart-code").addEventListener("click", showChartCode);
+$("vc-column").addEventListener("change", renderValueCounts);
+for (const tab of document.querySelectorAll("#inspect-tabs button")) {
+  tab.addEventListener("click", () => {
+    app.inspectKind = tab.dataset.kind;
+    renderInspect();
+  });
+}
+$("btn-code").addEventListener("click", showCode);
+$("code-close").addEventListener("click", () => $("code-dialog").close());
+$("code-copy").addEventListener("click", async () => {
+  await window.api.copyText(app.script ? app.script.code : "");
+  toast("success", "Code copied to the clipboard.");
+});
+$("code-save").addEventListener("click", async () => {
+  if (!app.script) return;
+  const res = await window.api.saveText(app.script.code, app.script.fileName);
+  if (res) toast("success", `Saved ${res.path}`);
+});
+
+$("page-prev").addEventListener("click", () => {
+  if (app.page > 0) {
+    app.page--;
+    loadPage();
+  }
+});
+$("page-next").addEventListener("click", () => {
+  app.page++;
+  loadPage();
+});
+
+/* theme toggle ------------------------------------------------------- */
+
+function syncThemeButton() {
+  const dark = document.documentElement.dataset.theme === "dark";
+  $("theme-label").textContent = dark ? "Light mode" : "Dark mode";
+}
+
+function setTheme(theme, persist) {
+  document.documentElement.dataset.theme = theme;
+  if (persist) {
+    try {
+      localStorage.setItem("theme", theme);
+    } catch {}
+  }
+  syncThemeButton();
+  // Re-render the current chart so its colours match the new theme.
+  if (app.chartImage) generateChart();
+}
+
+$("btn-theme").addEventListener("click", () =>
+  setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark", true)
+);
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (e) => {
+  let saved = null;
+  try {
+    saved = localStorage.getItem("theme");
+  } catch {}
+  if (!saved) setTheme(e.matches ? "dark" : "light", false);
+});
+syncThemeButton();
+
+for (const btn of document.querySelectorAll("#nav .nav-item")) {
+  btn.addEventListener("click", () => {
+    if (app.state) showSection(btn.dataset.section);
+  });
+}
+
+// Drag & drop a CSV anywhere in the window.
+let dragDepth = 0;
+window.addEventListener("dragenter", (e) => {
+  e.preventDefault();
+  dragDepth++;
+  document.body.classList.add("dragging");
+});
+window.addEventListener("dragleave", () => {
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (dragDepth === 0) document.body.classList.remove("dragging");
+});
+window.addEventListener("dragover", (e) => e.preventDefault());
+window.addEventListener("drop", (e) => {
+  e.preventDefault();
+  dragDepth = 0;
+  document.body.classList.remove("dragging");
+  const file = e.dataTransfer.files[0];
+  if (file) loadDroppedFile(file);
+});
+
+window.api.onBackendExit((reason) => toast("error", reason));
+
+// Keyboard shortcuts: Ctrl/Cmd+O open, Ctrl/Cmd+S export, Ctrl/Cmd+Z undo.
+window.addEventListener("keydown", (e) => {
+  if (!(e.ctrlKey || e.metaKey)) return;
+  if (e.key === "Enter" && app.section === "clean") {
+    e.preventDefault();
+    doClean();
+    return;
+  }
+  const tag = document.activeElement && document.activeElement.tagName;
+  const key = e.key.toLowerCase();
+  if (key === "o") {
+    e.preventDefault();
+    openCsv();
+  } else if (key === "s" && app.state) {
+    e.preventDefault();
+    exportCsv();
+  } else if (key === "z" && app.state && app.state.canUndo && tag !== "INPUT") {
+    e.preventDefault();
+    undo();
+  }
+});
+
+for (const btn of document.querySelectorAll("#nav .nav-item")) btn.disabled = true;
+renderChartTiles();
+syncInspectTabs();
+renderOpList();

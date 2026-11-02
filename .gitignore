@@ -8,3 +8,8 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Node / Electron
+node_modules/
+out/
+dist/

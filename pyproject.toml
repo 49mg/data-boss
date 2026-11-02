@@ -1,12 +1,16 @@
 [project]
 name = "data-boss"
 version = "0.1.0"
-description = "Add your description here"
+description = "Desktop app (Electron + pandas) for exploring, cleaning and visualising CSV datasets"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "matplotlib>=3.10.9",
     "pandas>=2.3.3",
     "seaborn>=0.13.2",
-    "streamlit>=1.57.0",
+]
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.22.3",
 ]

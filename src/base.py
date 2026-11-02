@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from matplotlib.figure import Figure
+from pandas import DataFrame
 
 
 class BaseDataInspector(ABC):
@@ -7,23 +8,23 @@ class BaseDataInspector(ABC):
         self.df = dataframe
 
     @abstractmethod
-    def show_info(self):
+    def show_info(self) -> dict:
         pass
 
     @abstractmethod
-    def show_desc(self):
+    def show_desc(self) -> dict:
         pass
 
     @abstractmethod
-    def show_duplicated_value(self):
+    def show_duplicated_value(self) -> dict:
         pass
 
     @abstractmethod
-    def show_non_value(self):
+    def show_non_value(self) -> dict:
         pass
 
     @abstractmethod
-    def show_column_profile(self):
+    def show_column_profile(self) -> DataFrame:
         pass
 
 
@@ -73,33 +74,35 @@ class BaseDataCleaner(ABC):
 
 
 class BaseDataVisualizer(ABC):
+    """Chart builders. Each draw_* returns (figure, insights, notes, code)."""
+
     def __init__(self, dataframe):
         self.df = dataframe.copy()
 
     @abstractmethod
-    def draw_histogram(self, column) -> Figure:
+    def draw_histogram(self, column, **options) -> tuple[Figure, list, list, list]:
         pass
 
     @abstractmethod
-    def draw_boxplot(self, x_col, y_col) -> Figure:
+    def draw_boxplot(self, y, x=None, **options) -> tuple[Figure, list, list, list]:
         pass
 
     @abstractmethod
-    def scatter_plot(self, x_col, y_col) -> Figure:
+    def scatter_plot(self, x, y, **options) -> tuple[Figure, list, list, list]:
         pass
 
     @abstractmethod
-    def draw_heatmap(self) -> Figure:
+    def draw_heatmap(self, columns=None, **options) -> tuple[Figure, list, list, list]:
         pass
 
     @abstractmethod
-    def draw_line_chart(self, x_col, y_col) -> Figure:
+    def draw_line_chart(self, x, y, **options) -> tuple[Figure, list, list, list]:
         pass
 
     @abstractmethod
-    def draw_bar_chart(self, x_col, y_col) -> Figure:
+    def draw_bar_chart(self, x, y=None, **options) -> tuple[Figure, list, list, list]:
         pass
 
     @abstractmethod
-    def draw_pairplot(self) -> Figure:
+    def draw_pairplot(self, columns=None, **options) -> tuple[Figure, list, list, list]:
         pass

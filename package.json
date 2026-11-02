@@ -1,0 +1,77 @@
+{
+  "name": "data-boss",
+  "productName": "Data Boss",
+  "version": "0.1.0",
+  "description": "Desktop app for exploring, cleaning and visualising CSV datasets",
+  "desktopName": "data-boss.desktop",
+  "main": "electron/main.js",
+  "license": "MIT",
+  "private": true,
+  "author": {
+    "name": "mg",
+    "email": "mgdhia49@gmail.com"
+  },
+  "homepage": "https://github.com/49mg/data-boss",
+  "scripts": {
+    "start": "electron .",
+    "build:backend": "uv run --frozen pyinstaller --noconfirm --clean --onedir --name data-boss-backend --distpath build/pyinstaller --workpath build/pyinstaller-work --specpath build/pyinstaller-spec --exclude-module tkinter server.py",
+    "dist": "npm run build:backend && electron-builder --publish never",
+    "dist:linux": "npm run build:backend && electron-builder --linux --publish never",
+    "dist:mac": "npm run build:backend && electron-builder --mac --publish never",
+    "dist:win": "npm run build:backend && electron-builder --win --publish never"
+  },
+  "devDependencies": {
+    "electron": "^45.2.1",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "io.github.49mg.databoss",
+    "productName": "Data Boss",
+    "artifactName": "Data-Boss-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "buildResources": "assets",
+      "output": "dist"
+    },
+    "files": [
+      "electron/**",
+      "renderer/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build/pyinstaller/data-boss-backend",
+        "to": "backend"
+      }
+    ],
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Office",
+      "executableName": "data-boss",
+      "synopsis": "Explore, clean and visualise CSV datasets",
+      "syncDesktopName": true
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.productivity",
+      "identity": "-",
+      "hardenedRuntime": false
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Data Boss"
+    }
+  }
+}
