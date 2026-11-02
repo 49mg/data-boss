@@ -1,0 +1,114 @@
+name: CI
+
+on:
+  push:
+    branches: [main, desktop-application]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Python lint (ruff)
+        run: uvx ruff check src server.py
+
+      - name: Lockfile is up to date
+        run: uv lock --check
+
+      - name: JavaScript syntax
+        run: |
+          for f in electron/*.js renderer/*.js; do
+            node --check "$f"
+          done
+
+  build:
+    name: Build ${{ matrix.name }}
+    needs: lint
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux (x64)
+            os: ubuntu-22.04
+            args: --linux
+          - name: Windows (x64)
+            os: windows-latest
+            args: --win --x64
+          - name: macOS (Apple silicon)
+            os: macos-latest
+            args: --mac --arm64
+          - name: macOS (Intel)
+            os: macos-15-intel
+            args: --mac --x64
+    env:
+      UV_PYTHON_DOWNLOADS: never
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+
+      - uses: astral-sh/setup-uv@v6
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: |
+          uv sync --frozen
+          npm ci
+
+      - name: Build data engine (PyInstaller)
+        run: npm run build:backend
+
+      - name: Smoke-check the bundled engine
+        shell: bash
+        run: |
+          printf 'city,price\nBaghdad,10\nBasra,12\nBaghdad,\n' > smoke.csv
+          exe=build/pyinstaller/data-boss-backend/data-boss-backend
+          if [ "$RUNNER_OS" = "Windows" ]; then exe="$exe.exe"; fi
+          printf '%s\n' \
+            '{"id":1,"cmd":"load","args":{"path":"smoke.csv"}}' \
+            '{"id":2,"cmd":"inspect","args":{"kind":"QUALITY"}}' \
+            '{"id":3,"cmd":"preview","args":{"method":"DROP_NA_ROWS"}}' \
+            '{"id":4,"cmd":"plot","args":{"kind":"BAR","params":{"x":"city","y":"price"}}}' \
+            | "$exe" > smoke-out.txt
+          python - <<'PY'
+          import json
+          msgs = [json.loads(line) for line in open("smoke-out.txt")]
+          status = {m["id"]: m["ok"] for m in msgs}
+          bad = [m for m in msgs if not m["ok"]]
+          assert status == {0: True, 1: True, 2: True, 3: True, 4: True}, bad or status
+          print("Bundled engine OK:", sorted(status))
+          PY
+
+      - name: Build installer (electron-builder)
+        run: npx electron-builder ${{ matrix.args }} --publish never
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.os }}
+          retention-days: 7
+          path: |
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.dmg
+            dist/*.exe
+          if-no-files-found: error

@@ -1,4 +1,5 @@
 import pandas as pd
+
 from .base import BaseDataCleaner
 
 # Characters stripped before parsing "numbers stored as text": thousands
@@ -355,7 +356,7 @@ class DataCleaner(BaseDataCleaner):
         try:
             self.df[column] = self.df[column].astype(dtype)
         except (ValueError, TypeError) as e:
-            raise ValueError(f"Cannot convert '{column}' to {dtype}: {e}")
+            raise ValueError(f"Cannot convert '{column}' to {dtype}: {e}") from e
         self.code = f"df[{column!r}] = df[{column!r}].astype({dtype!r})"
         return f"Changed '{column}' type to {dtype}."
 
@@ -373,7 +374,8 @@ class DataCleaner(BaseDataCleaner):
             self.df[col] = parsed
         self.code = (
             f"for col in {cols!r}:\n"
-            f"    df[col] = pd.to_numeric(df[col].astype('string').str.replace(r'{NUMBER_JUNK}', '', regex=True), errors='coerce').astype('float64')"
+            f"    text = df[col].astype('string').str.replace(r'{NUMBER_JUNK}', '', regex=True)\n"
+            "    df[col] = pd.to_numeric(text, errors='coerce').astype('float64')"
         )
         lost = f" {_plural(failed, 'value')} could not be read and became missing." if failed else ""
         return f"Converted {_plural(len(cols), 'column')} to numbers.{lost}"

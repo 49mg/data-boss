@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+
 from matplotlib.figure import Figure
 from pandas import DataFrame
 

@@ -1,5 +1,7 @@
 # Data Boss
 
+[![CI](https://github.com/49mg/data-boss/actions/workflows/ci.yml/badge.svg?branch=desktop-application)](https://github.com/49mg/data-boss/actions/workflows/ci.yml)
+
 A desktop app (Electron + Python/pandas) for exploring and cleaning CSV datasets. Open a file, profile columns, inspect data quality, apply cleaning operations with full undo history, and generate charts — all in a native window.
 
 Built around three focused classes: `DataInspector` for summaries, `DataCleaner` for mutations, and `DataVisualizer` for plots.

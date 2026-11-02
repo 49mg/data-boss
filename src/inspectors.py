@@ -3,6 +3,7 @@ import math
 
 import numpy as np
 import pandas as pd
+
 from .base import BaseDataInspector
 
 SEVERITY_ORDER = {"critical": 0, "warning": 1, "info": 2}
