@@ -2009,6 +2009,9 @@ async function runQuery() {
   app.query.sql = sql;
   const out = $("query-output");
   $("query-result-card").hidden = false;
+  // Until this query finishes, Apply/Chart/Save would act on the previous result: hide them.
+  app.query.lastSql = "";
+  $("query-actions").hidden = true;
   const seq = ++querySeq;
   const loading = el("div", { class: "inline-loading" }, el("span", { class: "impact-dot pulse" }), "Running query…");
   const showLoading = setTimeout(() => seq === querySeq && out.replaceChildren(loading), 120);
