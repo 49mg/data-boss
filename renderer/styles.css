@@ -1152,6 +1152,27 @@ details.raw[open] summary { margin-bottom: 12px; }
 .test-caveats { border-top: 1px solid var(--border); padding-top: 14px; }
 .test-caveats li { color: var(--muted); }
 
+/* trends */
+.bad-text { color: var(--danger); font-weight: 500; }
+.trend-insights { background: var(--info-bg); border-color: color-mix(in srgb, var(--info) 28%, transparent); }
+.trend-insights .test-verdict-label { color: var(--info); }
+.trend-insights ul { margin: 8px 0 0; padding-left: 18px; font-size: 14px; line-height: 1.6; }
+.trend-chart { border: 1px solid var(--border); border-radius: 10px; padding: 12px 12px 8px; }
+.trend-svg { display: block; width: 100%; height: auto; }
+.trend-grid { stroke: var(--border); stroke-width: 1; }
+.trend-axis { fill: var(--muted); font: 11px var(--mono); }
+.trend-line { fill: none; stroke: var(--primary); stroke-width: 2.2; stroke-linejoin: round; }
+.trend-avg { fill: none; stroke: var(--warning); stroke-width: 2; stroke-dasharray: 6 4; }
+.trend-dot { fill: var(--primary); }
+.trend-dot.partial { fill: var(--surface); stroke: var(--primary); stroke-width: 1.5; }
+.trend-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 12px; margin-top: 6px; }
+.trend-key { display: inline-block; width: 18px; height: 3px; border-radius: 2px; margin-left: 10px; }
+.trend-key:first-child { margin-left: 0; }
+.trend-key.value { background: var(--primary); }
+.trend-key.avg { background: repeating-linear-gradient(90deg, var(--warning) 0 6px, transparent 6px 9px); }
+.trend-key.partial { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--primary); }
+.trend-table { max-height: 420px; }
+
 @media (max-width: 1100px) {
   .issue { grid-template-columns: 1fr; gap: 8px; }
   .corr-row { grid-template-columns: 1fr 1fr 56px; }

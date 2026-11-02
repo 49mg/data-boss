@@ -411,10 +411,13 @@ function setState(snapshot) {
   app.inspectStale = true; // refreshed when the Inspect screen is shown
   app.query.infoStale = true;
   testGroupCache.clear();
-  if (app.section === "analyze" && app.analyzeTab !== "tests") renderPivotFields();
+  const tab = app.section === "analyze" ? app.analyzeTab || "pivot" : null;
+  if (tab === "pivot") renderPivotFields();
   else app.pivotStale = true;
-  if (app.section === "analyze" && app.analyzeTab === "tests") renderTestFields(true);
+  if (tab === "tests") renderTestFields(true);
   else app.testStale = true;
+  if (tab === "trends") renderTrendFields(true);
+  else app.trendStale = true;
   showSection(app.section);
 }
 
@@ -475,6 +478,7 @@ function showSection(name) {
   if (app.state && name === "query" && app.query.infoStale) loadQueryInfo();
   if (app.state && name === "analyze") {
     if (app.analyzeTab === "tests") app.testStale !== false && renderTestFields(true);
+    else if (app.analyzeTab === "trends") app.trendStale !== false && renderTrendFields(true);
     else if (app.pivotStale) renderPivotFields(true);
   }
 }
@@ -507,6 +511,9 @@ function onLoaded(snapshot) {
   app.pivotStale = true;
   app.test = null;
   app.testStale = true;
+  app.trend = null;
+  app.trendStale = true;
+  $("trend-output").replaceChildren();
   $("test-output").replaceChildren();
   $("pivot-chart-card").hidden = true;
   app.query = { sql: $("sql-editor").value, lastSql: "", info: null, infoStale: true, result: null, chart: null };
@@ -2332,11 +2339,172 @@ function showPivotCode() {
 function selectAnalyzeTab(tab) {
   app.analyzeTab = tab;
   for (const b of document.querySelectorAll("#analyze-tabs button")) b.setAttribute("aria-selected", String(b.dataset.tab === tab));
-  $("analyze-pivot").hidden = tab !== "pivot";
-  $("analyze-tests").hidden = tab !== "tests";
+  for (const t of ["pivot", "trends", "tests"]) $(`analyze-${t}`).hidden = tab !== t;
   if (!app.state) return;
   if (tab === "tests") renderTestFields(app.testStale !== false);
+  else if (tab === "trends") renderTrendFields(app.trendStale !== false);
   else if (app.pivotStale) renderPivotFields(true);
+}
+
+/* ---- trends ------------------------------------------------------------ */
+
+let trendValues = {};
+let trendTimer = null;
+let trendSeq = 0;
+
+function renderTrendFields(run = false) {
+  const memory = (app.forms.trends ||= {});
+  const dates = datetimeCols();
+  if (!dates.length) {
+    $("trend-fields").replaceChildren(el("p", { class: "muted no-inputs",
+      text: "No date columns yet. Use Convert to date in Clean on the column that holds dates." }),
+      el("button", { class: "btn btn-sm", onclick: () => openFix({ method: "TO_DATETIME", label: "Convert to date" }) },
+        icon("i-clean"), "Convert to date…"));
+    $("trend-actions").hidden = true;
+    $("trend-sub").textContent = "";
+    $("trend-output").replaceChildren(note("info", "Trends need a date column."));
+    app.trendStale = false;
+    return;
+  }
+  const counting = !memory.value;
+  const specs = [
+    { key: "date", label: "Date column", type: "select", options: dates },
+    { key: "value", label: "Value", type: "select", rerender: true,
+      options: [{ value: "", label: "Number of rows" }, ...allCols().filter((c) => !dates.includes(c))], default: numericCols()[0] || "" },
+  ];
+  if (!counting) {
+    specs.push({ key: "agg", label: "Combine with", type: "select", default: "sum",
+      options: toOptions([["sum", "Sum"], ["mean", "Mean"], ["median", "Median"], ["min", "Min"], ["max", "Max"], ["count", "Count (non-empty)"], ["nunique", "Distinct values"]]) });
+  }
+  specs.push(
+    { key: "freq", label: "Period", type: "select", default: "M",
+      options: toOptions([["D", "Day"], ["W", "Week"], ["M", "Month"], ["Q", "Quarter"], ["Y", "Year"]]) },
+    { key: "compare", label: "Compare with", type: "select",
+      options: toOptions([["previous", "Previous period"], ["year", "Same period last year"]]) },
+    { key: "window", label: "Moving average", type: "select", default: "3",
+      options: toOptions([["0", "None"], ["3", "3 periods"], ["6", "6 periods"], ["12", "12 periods"]]) },
+  );
+  const rerender = new Set(specs.filter((x) => x.rerender).map((x) => x.key));
+  trendValues = buildForm($("trend-fields"), specs, memory, (values, key) => {
+    trendValues = values;
+    if (key && rerender.has(key)) return renderTrendFields(true);
+    scheduleTrend();
+  });
+  if (run) scheduleTrend(0);
+}
+
+function trendParams(v) {
+  return { date: v.date, value: v.value || null, agg: v.value ? v.agg || "sum" : "count", freq: v.freq || "M",
+    compare: v.compare || "previous", window: Number(v.window || 0) };
+}
+
+function scheduleTrend(delay = 250) {
+  clearTimeout(trendTimer);
+  app.trendStale = false;
+  trendTimer = setTimeout(runTrend, delay);
+}
+
+async function runTrend() {
+  if (!app.state || !trendValues.date) return;
+  const seq = ++trendSeq;
+  const out = $("trend-output");
+  const params = trendParams(trendValues);
+  const loading = el("div", { class: "inline-loading" }, el("span", { class: "impact-dot pulse" }), "Calculating…");
+  const showLoading = setTimeout(() => seq === trendSeq && out.replaceChildren(loading), 150);
+  const hideCancel = delayedCancel(loading, "trends", () => seq === trendSeq && out.replaceChildren(note("info", "Cancelled.")));
+  try {
+    const res = await callLatest("trends", "trends", { params });
+    if (seq !== trendSeq) return;
+    app.trend = { params, res };
+    $("trend-sub").textContent = `${res.label} per ${res.unit}${res.compare === "year" ? " · vs a year earlier" : ""}`;
+    $("trend-actions").hidden = false;
+    out.replaceChildren(trendView(res));
+  } catch (err) {
+    if (seq !== trendSeq || isCancelled(err)) return;
+    app.trend = null;
+    $("trend-actions").hidden = true;
+    out.replaceChildren(note("warn", cleanError(err)));
+  } finally {
+    clearTimeout(showLoading);
+    hideCancel();
+  }
+}
+
+const rowsOf = (t) => t.data.map((r) => Object.fromEntries(t.columns.map((c, i) => [c, r[i]])));
+
+function trendChart(rows, hasAvg) {
+  const W = 800, H = 240, L = 56, R = 12, T = 12, B = 30;
+  const vals = rows.flatMap((r) => [r.value, hasAvg ? r.movingAvg : null]).filter((v) => v != null);
+  if (!vals.length) return null;
+  let lo = Math.min(0, ...vals), hi = Math.max(...vals);
+  if (hi === lo) hi = lo + 1;
+  const x = (i) => L + (rows.length === 1 ? 0 : (i / (rows.length - 1)) * (W - L - R));
+  const y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = (tag, attrs, text) => {
+    const n = document.createElementNS(ns, tag);
+    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+    if (text != null) n.textContent = text;
+    return n;
+  };
+  const root = svg("svg", { viewBox: `0 0 ${W} ${H}`, class: "trend-svg", role: "img", "aria-label": "Trend chart" });
+  for (let k = 0; k <= 4; k++) {
+    const v = lo + ((hi - lo) * k) / 4;
+    root.append(svg("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: "trend-grid" }),
+      svg("text", { x: L - 8, y: y(v) + 4, class: "trend-axis", "text-anchor": "end" }, fnum(v)));
+  }
+  const ticks = [...new Set([0, Math.floor((rows.length - 1) / 2), rows.length - 1])];
+  for (const i of ticks) {
+    root.append(svg("text", { x: x(i), y: H - 8, class: "trend-axis", "text-anchor": i === 0 ? "start" : i === rows.length - 1 ? "end" : "middle" }, rows[i].period));
+  }
+  const path = (key) => rows.map((r, i) => (r[key] == null ? null : `${x(i)},${y(r[key])}`)).filter(Boolean).join(" ");
+  root.append(svg("polyline", { points: path("value"), class: "trend-line" }));
+  if (hasAvg) root.append(svg("polyline", { points: path("movingAvg"), class: "trend-avg" }));
+  if (rows.length <= 120) {
+    rows.forEach((r, i) => {
+      if (r.value == null) return;
+      const dot = svg("circle", { cx: x(i), cy: y(r.value), r: 3.5, class: r.complete ? "trend-dot" : "trend-dot partial" });
+      dot.append(svg("title", {}, `${r.period}: ${fnum(r.value)}${r.complete ? "" : " (incomplete)"}`));
+      root.append(dot);
+    });
+  }
+  return root;
+}
+
+function trendView(res) {
+  const rows = rowsOf(res.table);
+  const hasAvg = res.table.columns.includes("movingAvg");
+  const hasTotal = res.table.columns.includes("runningTotal");
+  const insights = el("div", { class: "test-verdict trend-insights" },
+    el("div", { class: "test-verdict-label", text: "What changed" }),
+    el("ul", {}, res.insights.map((t) => el("li", { text: t }))));
+  const legend = el("div", { class: "trend-legend muted" },
+    el("span", { class: "trend-key value" }), res.label,
+    hasAvg ? el("span", { class: "trend-key avg" }) : null, hasAvg ? `${res.window}-${res.unit} moving average` : null,
+    rows.some((r) => !r.complete) ? el("span", { class: "trend-key partial" }) : null,
+    rows.some((r) => !r.complete) ? "incomplete period" : null);
+  const chart = el("div", { class: "trend-chart" }, trendChart(rows, hasAvg), legend);
+  const heads = ["Period", "Value", "Change", "Change %", hasAvg ? "Moving avg" : null, hasTotal ? "Running total" : null].filter(Boolean);
+  const body = rows.slice().reverse().map((r) =>
+    el("tr", { class: r.complete ? null : "muted" },
+      el("td", { text: r.period + (r.complete ? "" : " *") }),
+      el("td", { class: "num", text: fnum(r.value) }),
+      el("td", { class: `num ${r.change > 0 ? "good-text" : r.change < 0 ? "bad-text" : "muted"}`, text: r.change == null ? "—" : (r.change > 0 ? "+" : "") + fnum(r.change) }),
+      el("td", { class: `num ${r.changePct > 0 ? "good-text" : r.changePct < 0 ? "bad-text" : "muted"}`,
+        text: r.changePct == null ? "—" : `${r.changePct > 0 ? "+" : ""}${r.changePct.toFixed(1)}%` }),
+      hasAvg ? el("td", { class: "num muted", text: fnum(r.movingAvg) }) : null,
+      hasTotal ? el("td", { class: "num muted", text: fnum(r.runningTotal) }) : null));
+  const tableCard = el("div", { class: "table-wrap trend-table" },
+    el("table", { class: "test-table" },
+      el("thead", {}, el("tr", {}, heads.map((h, i) => el("th", { text: h, class: i ? "num" : null })))),
+      el("tbody", {}, body)));
+  const notes = res.notes.length ? el("div", { class: "chart-footnotes" }, res.notes.map((t) => el("p", { text: t }))) : null;
+  return el("div", { class: "test-body" }, insights, chart, tableCard, notes);
+}
+
+function showTrendCode() {
+  if (!app.trend) return;
+  openCodeDialog("Trend table as pandas code", "Rebuilds your data and the same period table.", app.trend.res.code, "trend.py");
 }
 
 const testable = () => app.state.columns.filter((c) => c.kind !== "other").map((c) => c.name);
@@ -3049,6 +3217,7 @@ $("btn-code").addEventListener("click", showCode);
 $("btn-pivot-save").addEventListener("click", savePivot);
 $("btn-pivot-code").addEventListener("click", showPivotCode);
 $("btn-test-code").addEventListener("click", showTestCode);
+$("btn-trend-code").addEventListener("click", showTrendCode);
 for (const b of document.querySelectorAll("#analyze-tabs button")) b.addEventListener("click", () => selectAnalyzeTab(b.dataset.tab));
 $("btn-pivot-chart").addEventListener("click", togglePivotChart);
 $("btn-run-query").addEventListener("click", runQuery);
