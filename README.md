@@ -61,6 +61,10 @@ A **column detail picker** below the table lets you select any column and view i
 - **Compare segment** — describe a group of rows (e.g. churned = yes, or plan = pro and fee > 40) and every other column is compared with the rest of the data: averages or category shares side by side, the fitting test per column, p-values adjusted for testing many columns (Holm), clear differences ranked first
 - **Tests** — pick a measure and what to compare it by; the fitting test is chosen from the column types, group count, shape and spread (t-test / Welch, Mann-Whitney, ANOVA / Kruskal-Wallis with pairwise comparisons, chi-square / Fisher, Pearson / Spearman). Each result shows why that test was used, the p-value, effect size, confidence interval, a one-sentence interpretation and caveats, plus the scipy code that reproduces it
 
+### Model
+
+Pick a column to predict and the columns to learn from; the task (regression or classification) is detected automatically. Data Boss trains a baseline, a linear/logistic model and a random forest on 80% of the rows and scores them on the other 20%. Imputing, scaling and one-hot encoding happen inside a scikit-learn pipeline fitted on the training rows only, so nothing leaks from the test rows. Results include R², MAE and RMSE or accuracy, F1 and ROC-AUC, a predicted-vs-actual chart or confusion matrix, permutation feature importance, and warnings for tiny data, class imbalance, suspiciously perfect scores (leakage) and overfitting. When no model beats guessing it says so. **Code** exports the full scikit-learn script.
+
 ### Report
 
 Every chart, pivot table, trend, segment comparison and test result has a **Report** button. The Report screen collects them with your own headings and notes; reorder or remove items, then **Export HTML** (one self-contained file with images inlined, opens offline in any browser) or **Export PDF**. Charts in the report are always drawn in light colours so they print well, and the report is kept between sessions.
@@ -153,6 +157,7 @@ data-boss/
 │   ├── base.py             # Abstract base classes (BaseDataInspector, BaseDataCleaner, BaseDataVisualizer)
 │   ├── inspectors.py       # DataInspector — read-only data summaries
 │   ├── target.py           # Target analysis: rank columns by relationship to one column
+│   ├── model.py            # Model builder: baseline, linear and random forest with honest evaluation
 │   ├── notebook.py         # Writes Jupyter notebooks (.ipynb) without extra dependencies
 │   ├── segments.py         # Segment vs rest comparison on every column
 │   ├── trends.py           # Period-over-period trends with insight sentences

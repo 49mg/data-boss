@@ -74,6 +74,7 @@ const SECTION_TITLES = {
   query: "Query",
   analyze: "Analyze",
   visualize: "Visualize",
+  model: "Model",
   report: "Report",
 };
 
@@ -479,6 +480,7 @@ function showSection(name) {
   if (app.state && name === "inspect" && app.inspectStale) renderInspect();
   if (app.state && name === "visualize" && app.chartKind && app.chartStale) scheduleRender(0);
   if (app.state && name === "report") renderReport();
+  if (app.state && name === "model") renderModelFields();
   if (app.state && name === "query" && app.query.infoStale) loadQueryInfo();
   if (app.state && name === "analyze") {
     if (app.analyzeTab === "tests") app.testStale !== false && renderTestFields(true);
@@ -520,6 +522,9 @@ function onLoaded(snapshot) {
   app.trendStale = true;
   app.segment = null;
   app.segmentStale = true;
+  app.model = null;
+  $("model-output").replaceChildren();
+  $("model-actions").hidden = true;
   $("segment-output").replaceChildren();
   $("trend-output").replaceChildren();
   $("test-output").replaceChildren();
@@ -3817,3 +3822,177 @@ async function exportNotebook() {
 
 $("btn-notebook").addEventListener("click", exportNotebook);
 $("btn-chart-notebook").addEventListener("click", exportNotebook);
+
+/* ------------------------------------------------------------------ */
+/* model builder                                                        */
+/* ------------------------------------------------------------------ */
+
+let modelValues = {};
+let modelSeq = 0;
+
+function renderModelFields() {
+  const memory = (app.forms.model ||= {});
+  const cols = app.state.columns.filter((c) => c.kind !== "other").map((c) => c.name);
+  const target = cols.includes(memory.target) ? memory.target : numericCols()[0] || cols[0];
+  const others = allCols().filter((c) => c !== target);
+  const specs = [
+    { key: "target", label: "Target (what to predict)", type: "select", options: cols, default: target, rerender: true },
+    { key: "task", label: "Task", type: "select",
+      options: toOptions([["auto", "Detect automatically"], ["regression", "Regression: predict a number"], ["classification", "Classification: predict a category"]]) },
+    { key: `features:${target}`, label: "Use these columns", type: "multi", options: others, default: others,
+      hint: "IDs, free text and dates are left out automatically; the result lists them." },
+  ];
+  modelValues = buildForm($("model-fields"), specs, memory, (values, key) => {
+    modelValues = values;
+    if (key === "target") renderModelFields();
+  });
+}
+
+function modelParams(v) {
+  return { target: v.target, task: v.task || "auto", features: v[`features:${v.target}`] || [] };
+}
+
+async function trainModel() {
+  if (!app.state) return;
+  const params = modelParams(modelValues);
+  if (!params.features.length) {
+    $("model-output").replaceChildren(note("warn", "Tick at least one column to learn from."));
+    return;
+  }
+  const seq = ++modelSeq;
+  const out = $("model-output");
+  const loading = el("div", { class: "inline-loading" }, el("span", { class: "impact-dot pulse" }), "Training three models…");
+  out.replaceChildren(loading);
+  $("btn-train").disabled = true;
+  const hideCancel = delayedCancel(loading, "model", () => seq === modelSeq && out.replaceChildren(note("info", "Training cancelled.")));
+  try {
+    const res = await callLatest("model", "model", params);
+    if (seq !== modelSeq) return;
+    app.model = res;
+    $("model-title").textContent = res.task === "regression" ? `Predicting ${res.target} (regression)` : `Predicting ${res.target} (classification)`;
+    $("model-sub").textContent = `${fmt(res.trainRows)} training rows · ${fmt(res.testRows)} test rows · ${plural(res.features.length, "feature")}`;
+    $("model-actions").hidden = false;
+    out.replaceChildren(modelView(res));
+  } catch (err) {
+    if (seq !== modelSeq || isCancelled(err)) return;
+    app.model = null;
+    $("model-actions").hidden = true;
+    out.replaceChildren(note("warn", cleanError(err)));
+  } finally {
+    hideCancel();
+    $("btn-train").disabled = false;
+  }
+}
+
+const METRIC_COLUMNS = {
+  regression: [["r2", "R²", (v) => v.toFixed(3)], ["mae", "MAE", fnum], ["rmse", "RMSE", fnum], ["trainScore", "Train R²", (v) => v.toFixed(3)]],
+  classification: [["accuracy", "Accuracy", (v) => fmtPct(v * 100)], ["f1", "F1", (v) => v.toFixed(3)], ["rocAuc", "ROC-AUC", (v) => v.toFixed(3)],
+    ["trainScore", "Train F1", (v) => v.toFixed(3)]],
+};
+
+function scatterSvg(points, label) {
+  const W = 420, H = 300, L = 52, R = 10, T = 10, B = 36;
+  const vals = points.flat().filter((v) => v != null);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (hi === lo) hi = lo + 1;
+  const sx = (v) => L + ((v - lo) / (hi - lo)) * (W - L - R);
+  const sy = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+  const ns = "http://www.w3.org/2000/svg";
+  const node = (tag, attrs, text) => {
+    const n = document.createElementNS(ns, tag);
+    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+    if (text != null) n.textContent = text;
+    return n;
+  };
+  const svg = node("svg", { viewBox: `0 0 ${W} ${H}`, class: "trend-svg model-scatter", role: "img", "aria-label": `Predicted vs actual ${label}` });
+  for (let k = 0; k <= 4; k++) {
+    const v = lo + ((hi - lo) * k) / 4;
+    svg.append(node("line", { x1: L, x2: W - R, y1: sy(v), y2: sy(v), class: "trend-grid" }),
+      node("text", { x: L - 6, y: sy(v) + 4, class: "trend-axis", "text-anchor": "end" }, fnum(v)),
+      node("text", { x: sx(v), y: H - 20, class: "trend-axis", "text-anchor": "middle" }, fnum(v)));
+  }
+  svg.append(node("line", { x1: sx(lo), y1: sy(lo), x2: sx(hi), y2: sy(hi), class: "model-diag" }));
+  for (const [a, p] of points) svg.append(node("circle", { cx: sx(a), cy: sy(p), r: 3, class: "model-point" }));
+  svg.append(node("text", { x: (L + W - R) / 2, y: H - 4, class: "trend-axis", "text-anchor": "middle" }, `actual ${label}`),
+    node("text", { x: 12, y: (T + H - B) / 2, class: "trend-axis", "text-anchor": "middle", transform: `rotate(-90 12 ${(T + H - B) / 2})` }, "predicted"));
+  return svg;
+}
+
+function confusionTable(conf) {
+  const max = Math.max(1, ...conf.matrix.flat());
+  return el("div", { class: "table-wrap" },
+    el("table", { class: "test-table confusion" },
+      el("thead", {}, el("tr", {}, el("th", { text: "actual ↓ / predicted →" }), conf.labels.map((l) => el("th", { class: "num", text: l })))),
+      el("tbody", {}, conf.matrix.map((row, i) =>
+        el("tr", {}, el("th", { text: conf.labels[i] }),
+          row.map((v, j) => el("td", { class: `num ${i === j ? "diag" : ""}`, text: fmt(v),
+            style: `--shade:${(v / max).toFixed(3)}` })))))));
+}
+
+function modelView(res) {
+  const verdict = el("div", { class: `test-verdict ${res.weak ? "none" : "found"}` },
+    el("div", { class: "test-verdict-label", text: res.weak ? "Not much better than guessing" : "Result on unseen rows" }),
+    el("p", { class: "test-sentence", text: res.summary }));
+  const warnings = res.warnings.map((w) => note("warn", w.text));
+  const cols = METRIC_COLUMNS[res.task];
+  const table = el("div", { class: "table-wrap" },
+    el("table", { class: "test-table" },
+      el("thead", {}, el("tr", {}, el("th", { text: "Model" }), cols.map(([, h]) => el("th", { class: "num", text: h })))),
+      el("tbody", {}, res.models.map((m) =>
+        el("tr", { class: m.best ? "best-row" : null },
+          el("td", {}, m.name, m.best ? el("span", { class: "chip chip-good", text: "best" }) : null),
+          cols.map(([k, , f]) => el("td", { class: "num", text: m[k] == null ? "—" : f(m[k]) })))))));
+  const hint = res.task === "regression"
+    ? "R² = share of the variation explained (1 is perfect, 0 is no better than the average). MAE = typical error in the target's units."
+    : `Accuracy = share of test rows right. F1 balances missed and false alarms${res.positiveClass ? ` for “${res.positiveClass}”` : " (averaged over classes)"}. ROC-AUC: 0.5 = guessing, 1 = perfect ranking.`;
+  const imp = res.importance;
+  const maxImp = Math.max(1e-12, ...imp.map((i) => i.mean || 0));
+  const importance = el("div", { class: "card" },
+    el("h2", { text: "Which columns matter" }),
+    el("p", { class: "card-hint", text: `How much the best model's test score drops when a column is shuffled. Around zero or below = the model doesn't rely on it.` }),
+    el("div", { class: "bar-list" }, imp.slice(0, 15).map((i) =>
+      el("div", { class: "bar-row" },
+        el("span", { class: "bar-label", text: i.feature, title: i.feature }),
+        bar(Math.max(0, i.mean) / maxImp),
+        el("span", { class: "bar-value", text: `${i.mean >= 0 ? "+" : ""}${i.mean.toFixed(3)}` })))));
+  const best = res.models.find((m) => m.best);
+  const detail = res.task === "regression"
+    ? el("div", { class: "card" }, el("h2", { text: `Predicted vs actual (${best.name.toLowerCase()})` }),
+      el("p", { class: "card-hint", text: "Each dot is a test row. On the diagonal = perfect prediction." }),
+      el("div", { class: "model-chart" }, scatterSvg(res.details.points, res.target)))
+    : res.details.confusion
+      ? el("div", { class: "card" }, el("h2", { text: `Confusion matrix (${best.name.toLowerCase()})` }),
+        el("p", { class: "card-hint", text: "Rows are the real values, columns the predictions; the diagonal is correct." }),
+        confusionTable(res.details.confusion))
+      : null;
+  const extras = [...res.notes];
+  const skipped = res.skipped.length
+    ? el("details", { class: "card tgt-skipped" }, el("summary", { text: `Columns left out (${res.skipped.length})` }),
+      el("ul", {}, res.skipped.map((k) => el("li", {}, el("strong", { text: k.column }), ` — ${k.reason}`))))
+    : null;
+  return el("div", { class: "test-body" },
+    verdict, ...warnings,
+    el("div", {}, table, el("p", { class: "card-hint model-hint", text: hint })),
+    el("div", { class: "grid-2 model-grid" }, detail, importance),
+    extras.length ? el("div", { class: "chart-footnotes" }, extras.map((t) => el("p", { text: t }))) : null,
+    skipped);
+}
+
+function showModelCode() {
+  if (!app.model) return;
+  openCodeDialog("Models as scikit-learn code", "Rebuilds your data, the same split and pipelines, and prints the same scores.", app.model.code, "model.py");
+}
+
+function reportModel() {
+  if (!app.model) return;
+  const r = app.model;
+  const cols = METRIC_COLUMNS[r.task];
+  addToReport({ type: "table", title: `Model: predicting ${r.target} (${r.task})`,
+    table: { columns: ["Model", ...cols.map(([, h]) => h)], data: r.models.map((m) => [m.name + (m.best ? " (best)" : ""), ...cols.map(([k]) => m[k])]) },
+    notes: [r.summary, ...r.warnings.map((w) => w.text),
+      `Most important: ${r.importance.slice(0, 3).map((i) => i.feature).join(", ")}.`, `${fmt(r.trainRows)} training rows, ${fmt(r.testRows)} test rows.`] });
+}
+
+$("btn-train").addEventListener("click", trainModel);
+$("btn-model-code").addEventListener("click", showModelCode);
+$("btn-report-model").addEventListener("click", reportModel);

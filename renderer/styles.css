@@ -1195,6 +1195,19 @@ details.raw[open] summary { margin-bottom: 12px; }
 
 .history-buttons { display: flex; gap: 6px; }
 
+/* model builder */
+.btn-block { width: 100%; justify-content: center; margin-top: 4px; }
+.model-hint { margin-top: 8px; }
+.best-row td { font-weight: 600; }
+.chip-good { margin-left: 8px; color: var(--success); border-color: color-mix(in srgb, var(--success) 40%, transparent); background: var(--success-bg); }
+.model-grid { align-items: start; }
+.model-grid .card { margin: 0; }
+.model-chart { max-width: 520px; }
+.model-diag { stroke: var(--muted); stroke-dasharray: 5 4; stroke-width: 1.2; }
+.model-point { fill: var(--primary); fill-opacity: 0.55; }
+.confusion td { background: color-mix(in srgb, var(--danger) calc(var(--shade) * 35%), transparent); }
+.confusion td.diag { background: color-mix(in srgb, var(--success) calc(var(--shade) * 45%), transparent); font-weight: 600; }
+
 /* report builder */
 #section-report { max-width: 960px; }
 .report-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px 18px; }

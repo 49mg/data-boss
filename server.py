@@ -32,6 +32,7 @@ from src import notebook as nb
 from src.analysis import pivot
 from src.files import FileFormatError, excel_sheets, read_table, write_table
 from src.inspectors import _label
+from src.model import train_models
 from src.query import example_queries, quote_ident, run_query, run_query_full, sql_code
 from src.segments import compare_segment
 from src.stats import compare
@@ -516,6 +517,13 @@ class Session:
         res["code"] = "\n".join(["import numpy as np", "import pandas as pd", "", *self._data_code(), "", res["code"], ""])
         return {**res, "table": table(res["table"])}
 
+    # ---- models ----------------------------------------------------------------
+
+    def cmd_model(self, target, features=None, task="auto"):
+        res = train_models(self.require_df(), target, features=features or None, task=task)
+        res["code"] = "\n".join(["import numpy as np", "import pandas as pd", "", *self._data_code(), "", res["code"], ""])
+        return jsonable(res)
+
     # ---- segment comparison --------------------------------------------------
 
     def cmd_segment(self, conditions):
@@ -581,6 +589,7 @@ class Session:
 # responsive and they can be cancelled. Everything else is answered inline.
 HEAVY_COMMANDS = {
     "plot", "preview", "inspect", "query", "query_chart", "pivot", "pivot_chart", "stats_test", "trends", "segment", "notebook",
+    "model",
 }
 
 

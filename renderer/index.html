@@ -26,6 +26,7 @@
         <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 7 5 11l4 4"/><path d="M5 11h9.5a4.5 4.5 0 0 1 0 9H12"/></symbol>
         <symbol id="i-theme" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16Z" class="fill"/></symbol>
         <symbol id="i-report" viewBox="0 0 24 24"><path d="M6.5 3.5h11v17h-11z"/><path d="M9 16.5v-3M12 16.5v-6M15 16.5v-4.5M9 7h6"/></symbol>
+        <symbol id="i-model" viewBox="0 0 24 24"><circle cx="6" cy="7" r="2"/><circle cx="6" cy="17" r="2"/><circle cx="18" cy="12" r="2"/><path d="M8 7.8 16 11M8 16.2 16 13"/></symbol>
         <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
         <symbol id="i-up" viewBox="0 0 24 24"><path d="m6 14 6-6 6 6"/></symbol>
         <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 10 6 6 6-6"/></symbol>
@@ -80,6 +81,9 @@
           </button>
           <button data-section="analyze" class="nav-item">
             <svg class="icon"><use href="#i-pivot"/></svg><span>Analyze</span>
+          </button>
+          <button data-section="model" class="nav-item">
+            <svg class="icon"><use href="#i-model"/></svg><span>Model</span>
           </button>
           <button data-section="visualize" class="nav-item">
             <svg class="icon"><use href="#i-chart"/></svg><span>Visualize</span>
@@ -458,6 +462,36 @@
           </section>
 
           <!-- Visualize -->
+          <section id="section-model" class="section section-wide" hidden>
+            <div class="page-head">
+              <h1>Model</h1>
+              <p>Predict one column from the others and see honestly how well it works on rows the model never saw.</p>
+            </div>
+            <div class="viz-layout">
+              <aside class="card viz-config">
+                <div class="viz-label">What to predict</div>
+                <div id="model-fields" class="fields fields-stack"></div>
+                <button id="btn-train" class="btn btn-primary btn-block"><svg class="icon"><use href="#i-play"/></svg>Train models</button>
+                <p class="test-help">80% of rows train the models, the other 20% test them. Missing values are filled and categories encoded inside the model, using the training rows only.</p>
+              </aside>
+              <div class="viz-main">
+                <div class="card card-flush">
+                  <div class="viz-toolbar">
+                    <div class="viz-heading">
+                      <div class="viz-kind" id="model-title">Model</div>
+                      <div class="viz-sub" id="model-sub"></div>
+                    </div>
+                    <div class="viz-actions" id="model-actions" hidden>
+                      <button id="btn-report-model" class="btn btn-sm" title="Add to the report"><svg class="icon"><use href="#i-report"/></svg>Report</button>
+                      <button id="btn-model-code" class="btn btn-sm"><svg class="icon"><use href="#i-code"/></svg>Code</button>
+                    </div>
+                  </div>
+                  <div id="model-output" class="test-output"></div>
+                </div>
+              </div>
+            </div>
+          </section>
+
           <section id="section-report" class="section" hidden>
             <div class="page-head">
               <h1>Report</h1>
