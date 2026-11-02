@@ -42,7 +42,7 @@ def _s(v):
     """Short label for a number or category in sentences."""
     if isinstance(v, (float, np.floating)):
         v = float(v)
-        return f"{v:.3g}" if abs(v) < 1e5 else f"{v:,.0f}"
+        return f"{v:,.0f}" if abs(v) >= 1000 else f"{v:.3g}"  # 1,803 rather than 1.8e+03
     text = str(v)
     return text if len(text) <= 40 else text[:37] + "…"
 

@@ -34,7 +34,8 @@ def _f(v):
 
 def _short(v):
     if isinstance(v, (float, np.floating)):
-        return f"{float(v):.3g}"
+        v = float(v)
+        return f"{v:,.0f}" if abs(v) >= 1000 else f"{v:.3g}"  # 1,803 rather than 1.8e+03
     text = str(v)
     return text if len(text) <= 40 else text[:37] + "…"
 
