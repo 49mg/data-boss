@@ -525,6 +525,7 @@ function onLoaded(snapshot) {
   app.page = 0;
   app.forms = { clean: {}, chart: {} };
   app.chartImage = null;
+  app.chartShown = null;
   if (typeof disposeEchart === "function") disposeEchart();
   app.recent = [];
   app.pivot = null;
@@ -3204,6 +3205,7 @@ function showChartMessage(kind, text) {
   $("viz-actions").hidden = true;
   $("viz-insights").hidden = true;
   app.chartImage = null;
+  app.chartShown = null;
   if (typeof disposeEchart === "function") disposeEchart();
   setChartHeading(app.chartKind, chartValues);
   $("chart-output").replaceChildren(el("div", { class: "viz-message" }, note(kind, text)));
@@ -3230,6 +3232,8 @@ async function generateChart() {
     app.chartImage = res.image;
     app.chartCode = res.code;
     app.chartParams = params;
+    // What is on screen now: Pin, Report and SVG use this pair even if another chart starts drawing.
+    app.chartShown = { kind, params, title: `${chartLabel()}: ${chartSubtitle(kind, chartValues)}` };
     setChartHeading(kind, chartValues);
     app.chartSpec = res.spec;
     showChartView();
@@ -3282,6 +3286,7 @@ function chartSuggestions() {
 
 function renderChartEmpty() {
   app.chartImage = null;
+  app.chartShown = null;
   if (typeof disposeEchart === "function") disposeEchart();
   $("viz-actions").hidden = true;
   $("viz-insights").hidden = true;
@@ -3347,7 +3352,8 @@ async function saveChart() {
 async function saveChartSvg() {
   if (!app.chartImage) return;
   try {
-    const res = await call("plot", { kind: app.chartKind, params: app.chartParams, style: chartStyle(), width: $("chart-stage").clientWidth, fmt: "svg" });
+    const { kind, params } = app.chartShown;
+    const res = await call("plot", { kind, params, style: chartStyle(), width: $("chart-stage").clientWidth, fmt: "svg" });
     const saved = await window.api.saveText(res.svg, chartFileName("svg"));
     if (saved) toast("success", `Saved ${saved.path}`);
   } catch (err) {
@@ -3597,10 +3603,11 @@ function lightChartStyle() {
 }
 
 async function reportChart() {
-  if (!app.chartImage || !app.chartKind) return;
+  if (!app.chartImage || !app.chartShown) return;
   try {
-    const res = await window.api.call("plot", { kind: app.chartKind, params: app.chartParams, style: lightChartStyle(), width: 900 });
-    addToReport({ type: "chart", title: `${chartLabel()}: ${chartSubtitle(app.chartKind, chartValues)}`, image: res.image,
+    const shown = app.chartShown;
+    const res = await window.api.call("plot", { kind: shown.kind, params: shown.params, style: lightChartStyle(), width: 900 });
+    addToReport({ type: "chart", title: shown.title, image: res.image,
       insights: res.insights, notes: res.notes });
   } catch (err) {
     toast("error", cleanError(err));
@@ -4614,8 +4621,9 @@ function pinTile(tile) {
 }
 
 function pinChart() {
-  if (!app.chartKind || !app.chartParams) return;
-  pinTile({ type: "chart", kind: app.chartKind, params: app.chartParams, title: `${chartLabel()}: ${chartSubtitle(app.chartKind, chartValues)}` });
+  if (!app.chartShown) return;
+  const { kind, params, title } = app.chartShown;
+  pinTile({ type: "chart", kind, params, title });
 }
 
 function pinPivot() {
