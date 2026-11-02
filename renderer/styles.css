@@ -1120,6 +1120,38 @@ details.raw[open] summary { margin-bottom: 12px; }
 .tgt-skipped summary { cursor: pointer; font-weight: 600; color: var(--muted); }
 .tgt-skipped ul { margin: 12px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.7; }
 
+/* statistical tests */
+.test-help { margin: 14px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
+.test-output { padding: 16px 18px 18px; }
+.test-output > .note { margin-top: 4px; }
+.test-verdict { border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; border: 1px solid var(--border); background: var(--surface2); }
+.test-verdict.found { background: var(--success-bg); border-color: color-mix(in srgb, var(--success) 30%, transparent); }
+.test-verdict-label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.test-verdict.found .test-verdict-label { color: var(--success); }
+.test-sentence { margin: 6px 0 0; font-size: 15px; line-height: 1.55; font-weight: 500; }
+.test-tiles { margin-bottom: 16px; }
+.test-tiles .stat-sub, .test-tiles .stat > div:last-child { line-height: 1.45; }
+.test-body { display: flex; flex-direction: column; gap: 18px; }
+.test-body h3 { margin: 0 0 8px; font-size: 13.5px; font-weight: 600; }
+.test-why ul, .test-caveats ul { margin: 0; padding-left: 18px; font-size: 13.5px; line-height: 1.65; }
+.test-checks { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.test-check { display: flex; gap: 10px; align-items: baseline; font-size: 13px; line-height: 1.5; }
+.test-check-mark {
+  flex: none; width: 18px; height: 18px; border-radius: 50%; display: inline-grid; place-items: center;
+  font-size: 11px; font-weight: 700; color: #fff; background: var(--success); transform: translateY(3px);
+}
+.test-check.warn .test-check-mark { background: var(--warning); }
+.test-stat { margin: 10px 0 0; font-size: 12px; }
+.test-table td, .test-table th { white-space: nowrap; }
+.whisker-cell { width: 34%; min-width: 160px; }
+.whisker { position: relative; height: 14px; }
+.whisker::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: var(--border); }
+.whisker-line { position: absolute; top: 50%; height: 3px; margin-top: -1px; border-radius: 2px; background: color-mix(in srgb, var(--primary) 45%, transparent); }
+.whisker-dot { position: absolute; top: 50%; width: 9px; height: 9px; margin: -4px 0 0 -4.5px; border-radius: 50%; background: var(--primary); }
+.good-text { color: var(--success); font-weight: 500; }
+.test-caveats { border-top: 1px solid var(--border); padding-top: 14px; }
+.test-caveats li { color: var(--muted); }
+
 @media (max-width: 1100px) {
   .issue { grid-template-columns: 1fr; gap: 8px; }
   .corr-row { grid-template-columns: 1fr 1fr 56px; }

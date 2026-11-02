@@ -403,8 +403,11 @@ function setState(snapshot) {
   renderChartFields();
   app.inspectStale = true; // refreshed when the Inspect screen is shown
   app.query.infoStale = true;
-  if (app.section === "analyze") renderPivotFields();
+  testGroupCache.clear();
+  if (app.section === "analyze" && app.analyzeTab !== "tests") renderPivotFields();
   else app.pivotStale = true;
+  if (app.section === "analyze" && app.analyzeTab === "tests") renderTestFields(true);
+  else app.testStale = true;
   showSection(app.section);
 }
 
@@ -463,7 +466,10 @@ function showSection(name) {
   if (app.state && name === "inspect" && app.inspectStale) renderInspect();
   if (app.state && name === "visualize" && app.chartKind && app.chartStale) scheduleRender(0);
   if (app.state && name === "query" && app.query.infoStale) loadQueryInfo();
-  if (app.state && name === "analyze" && app.pivotStale) renderPivotFields(true);
+  if (app.state && name === "analyze") {
+    if (app.analyzeTab === "tests") app.testStale !== false && renderTestFields(true);
+    else if (app.pivotStale) renderPivotFields(true);
+  }
 }
 
 async function loadPage() {
@@ -492,6 +498,9 @@ function onLoaded(snapshot) {
   app.recent = [];
   app.pivot = null;
   app.pivotStale = true;
+  app.test = null;
+  app.testStale = true;
+  $("test-output").replaceChildren();
   $("pivot-chart-card").hidden = true;
   app.query = { sql: $("sql-editor").value, lastSql: "", info: null, infoStale: true, result: null, chart: null };
   $("query-result-card").hidden = true;
@@ -2259,6 +2268,213 @@ function showPivotCode() {
   openCodeDialog("Pivot table as pandas code", "Builds the same table from your file.", app.pivot.res.code, "pivot_table.py");
 }
 
+/* ---- statistical tests ------------------------------------------------- */
+
+function selectAnalyzeTab(tab) {
+  app.analyzeTab = tab;
+  for (const b of document.querySelectorAll("#analyze-tabs button")) b.setAttribute("aria-selected", String(b.dataset.tab === tab));
+  $("analyze-pivot").hidden = tab !== "pivot";
+  $("analyze-tests").hidden = tab !== "tests";
+  if (!app.state) return;
+  if (tab === "tests") renderTestFields(app.testStale !== false);
+  else if (app.pivotStale) renderPivotFields(true);
+}
+
+const testable = () => app.state.columns.filter((c) => c.kind !== "other").map((c) => c.name);
+const kindOf = (name) => (app.state.columns.find((c) => c.name === name) || {}).kind;
+/** The column whose values form the groups, if either side is a category. */
+function testGroupColumn(v) {
+  if (v.by && kindOf(v.by) !== "numeric") return v.by;
+  if (v.outcome && kindOf(v.outcome) !== "numeric") return v.outcome === v.by ? null : v.outcome;
+  return null;
+}
+
+let testValues = {};
+let testTimer = null;
+let testSeq = 0;
+const testGroupCache = new Map();
+
+function renderTestFields(run = false) {
+  const memory = (app.forms.tests ||= {});
+  const cols = testable();
+  const num = numericCols();
+  const groups = groupCols();
+  const specs = [
+    { key: "outcome", label: "Measure", type: "select", options: cols, default: num[0] || cols[0], rerender: true,
+      hint: "The value you want to compare, e.g. fee or rating." },
+    { key: "by", label: "Compare by", type: "select", options: cols, default: groups[0] || cols.find((c) => c !== (memory.outcome || num[0])),
+      rerender: true, hint: "Groups (a category) or a second number to correlate with." },
+  ];
+  const draft = { outcome: memory.outcome ?? specs[0].default, by: memory.by ?? specs[1].default };
+  const groupCol = testGroupColumn(draft);
+  const cached = groupCol && testGroupCache.get(groupCol);
+  if (groupCol && cached) {
+    specs.push({ key: `groups:${groupCol}`, label: `Only these groups of ${groupCol} (optional)`, type: "multi",
+      options: cached.values.map((g) => ({ value: g.value, label: `${g.value} (${fmt(g.count)})` })),
+      hint: cached.total > cached.values.length ? `Showing the ${cached.values.length} most common of ${fmt(cached.total)}.` : "Leave empty to compare all groups." });
+  }
+  testValues = buildForm($("test-fields"), specs, memory, (values, key) => {
+    testValues = values;
+    if (key === "outcome" || key === "by") return renderTestFields(true);
+    scheduleTest();
+  });
+  if (groupCol && !cached) {
+    call("stats_groups", { column: groupCol })
+      .then((res) => { testGroupCache.set(groupCol, res); if (app.analyzeTab === "tests") renderTestFields(false); })
+      .catch(() => {});
+  }
+  if (run) scheduleTest(0);
+}
+
+function testParams(v) {
+  const groupCol = testGroupColumn(v);
+  const groups = groupCol ? v[`groups:${groupCol}`] || [] : [];
+  return { outcome: v.outcome, by: v.by, groups: groups.length ? groups : null };
+}
+
+function scheduleTest(delay = 250) {
+  clearTimeout(testTimer);
+  app.testStale = false;
+  if (!testValues.outcome || !testValues.by || testValues.outcome === testValues.by) {
+    $("test-actions").hidden = true;
+    $("test-name").textContent = "Statistical test";
+    $("test-question").textContent = "";
+    $("test-output").replaceChildren(note("info", "Pick two different columns."));
+    return;
+  }
+  testTimer = setTimeout(runTest, delay);
+}
+
+async function runTest() {
+  if (!app.state) return;
+  const seq = ++testSeq;
+  const out = $("test-output");
+  const loading = el("div", { class: "inline-loading" }, el("span", { class: "impact-dot pulse" }), "Running the test…");
+  const showLoading = setTimeout(() => seq === testSeq && out.replaceChildren(loading), 150);
+  const hideCancel = delayedCancel(loading, "stats", () => seq === testSeq && out.replaceChildren(note("info", "Cancelled.")));
+  try {
+    const res = await callLatest("stats", "stats_test", testParams(testValues));
+    if (seq !== testSeq) return;
+    app.test = res;
+    $("test-name").textContent = res.test;
+    $("test-question").textContent = res.question;
+    $("test-actions").hidden = false;
+    out.replaceChildren(testResult(res));
+  } catch (err) {
+    if (seq !== testSeq || isCancelled(err)) return;
+    app.test = null;
+    $("test-actions").hidden = true;
+    $("test-name").textContent = "Statistical test";
+    $("test-question").textContent = "";
+    out.replaceChildren(note("warn", cleanError(err)));
+  } finally {
+    clearTimeout(showLoading);
+    hideCancel();
+  }
+}
+
+const pText = (p) => (p == null ? "—" : p < 0.001 ? "< 0.001" : p < 0.01 ? p.toFixed(3) : p.toFixed(2));
+
+/** A row of CI whiskers on one shared scale. */
+function whiskers(rows, est, lo, hi, format = fnum) {
+  const vals = rows.flatMap((r) => [r[lo], r[hi], r[est]]).filter((v) => v != null);
+  const min = Math.min(...vals);
+  const span = Math.max(...vals) - min || 1;
+  const pos = (v) => `${((v - min) / span) * 100}%`;
+  return (r) =>
+    el("div", { class: "whisker", title: `${format(r[est])} (95% CI ${format(r[lo])} … ${format(r[hi])})` },
+      r[lo] != null ? el("span", { class: "whisker-line", style: `left:${pos(r[lo])};right:calc(100% - ${pos(r[hi])})` }) : null,
+      el("span", { class: "whisker-dot", style: `left:${pos(r[est])}` }));
+}
+
+function testResult(res) {
+  const found = res.significant;
+  const what = res.kind === "groups" ? "difference" : "relationship";
+  const verdict = el(
+    "div",
+    { class: `test-verdict ${found ? "found" : "none"}` },
+    el("div", { class: "test-verdict-label", text: found ? `A ${what} beyond chance` : `No clear ${what}` }),
+    el("p", { class: "test-sentence", text: res.interpretation })
+  );
+  const eff = res.effect;
+  const tiles = el(
+    "div",
+    { class: "stats test-tiles" },
+    stat("p-value", pText(res.p), found ? `below ${res.alpha}: unlikely to be chance alone` : `${res.alpha} or above: could be chance`,
+      found ? "good" : ""),
+    stat(eff.name, eff.value == null ? "—" : (eff.value > 0 && res.kind === "correlation" ? "+" : "") + eff.value.toFixed(2),
+      `${eff.size} · ${eff.explain}`),
+    res.ci
+      ? stat("95% confidence interval", `${fnum(res.ci.low)} … ${fnum(res.ci.high)}`, res.ci.label)
+      : stat("Rows used", fmt(res.n), res.dropped ? `${fmt(res.dropped)} left out (empty values)` : "No rows left out")
+  );
+
+  const statLine = res.statistic
+    ? `${res.statistic.name} = ${fnum(res.statistic.value)}${res.df != null ? `, df = ${Array.isArray(res.df) ? res.df.map(fnum).join(", ") : fnum(res.df)}` : ""}, n = ${fmt(res.n)}`
+    : "";
+  const why = el(
+    "div",
+    { class: "test-why" },
+    el("h3", { text: "Why this test" }),
+    el("ul", {}, res.why.map((w) => el("li", { text: w[0].toUpperCase() + w.slice(1) + "." }))),
+    el("div", { class: "test-checks" },
+      res.checks.map((c) =>
+        el("div", { class: `test-check ${c.ok ? "ok" : "warn"}` },
+          el("span", { class: "test-check-mark", text: c.ok ? "✓" : "!" }),
+          el("div", {}, el("strong", { text: c.name }), el("span", { class: "muted", text: ` — ${c.detail}` }))))),
+    statLine ? el("p", { class: "test-stat mono muted", text: statLine }) : null
+  );
+
+  let detail = null;
+  if (res.groups) {
+    const w = whiskers(res.groups, "mean", "ciLow", "ciHigh");
+    detail = el("div", { class: "table-wrap" },
+      el("table", { class: "test-table" },
+        el("thead", {}, el("tr", {}, ["Group", "n", "Mean", "95% CI of mean", "", "Median", "Std dev"].map((h, i) =>
+          el("th", { text: h, class: [1, 2, 5, 6].includes(i) ? "num" : null })))),
+        el("tbody", {}, res.groups.map((g) =>
+          el("tr", {},
+            el("td", { text: g.group }), el("td", { class: "num", text: fmt(g.n) }), el("td", { class: "num", text: fnum(g.mean) }),
+            el("td", { class: "mono muted", text: g.ciLow == null ? "—" : `${fnum(g.ciLow)} … ${fnum(g.ciHigh)}` }),
+            el("td", { class: "whisker-cell" }, w(g)),
+            el("td", { class: "num", text: fnum(g.median) }), el("td", { class: "num", text: fnum(g.std) }))))));
+  } else if (res.shares) {
+    const pct = (v) => fmtPct(v * 100);
+    const w = whiskers(res.shares, "share", "ciLow", "ciHigh", pct);
+    detail = el("div", { class: "table-wrap" },
+      el("table", { class: "test-table" },
+        el("thead", {}, el("tr", {}, [res.by, "n", `% ${res.outcome} = ${res.focus}`, "95% CI", ""].map((h, i) =>
+          el("th", { text: h, class: [1, 2].includes(i) ? "num" : null })))),
+        el("tbody", {}, res.shares.map((g) =>
+          el("tr", {},
+            el("td", { text: g.group }), el("td", { class: "num", text: fmt(g.n) }), el("td", { class: "num", text: pct(g.share) }),
+            el("td", { class: "mono muted", text: `${pct(g.ciLow)} … ${pct(g.ciHigh)}` }),
+            el("td", { class: "whisker-cell" }, w(g)))))));
+  }
+  const pairwise = res.pairwise
+    ? el("div", {},
+      el("h3", { text: "Which groups differ" }),
+      el("p", { class: "card-hint", text: `${res.pairwise.test} for each pair, p-values adjusted with the ${res.pairwise.correction} method.` }),
+      el("div", { class: "table-wrap" },
+        el("table", { class: "test-table" },
+          el("thead", {}, el("tr", {}, ["Pair", "p", "Adjusted p", ""].map((h, i) => el("th", { text: h, class: i && i < 3 ? "num" : null })))),
+          el("tbody", {}, res.pairwise.rows.map((r) =>
+            el("tr", {},
+              el("td", { text: `${r.a} vs ${r.b}` }), el("td", { class: "num muted", text: pText(r.p) }),
+              el("td", { class: "num", text: pText(r.pAdjusted) }),
+              el("td", { class: r.significant ? "good-text" : "muted", text: r.significant ? "differ" : "not clear" })))))))
+    : null;
+  const caveats = el("div", { class: "test-caveats" },
+    el("h3", { text: "Keep in mind" }),
+    el("ul", {}, res.caveats.map((c) => el("li", { text: c }))));
+  return el("div", {}, verdict, tiles, el("div", { class: "test-body" }, why, detail, pairwise, caveats));
+}
+
+function showTestCode() {
+  if (!app.test) return;
+  openCodeDialog(`${app.test.test} as Python code`, "Rebuilds your data and runs the same test with scipy.", app.test.code, "statistical_test.py");
+}
+
 /* ---- chart of the pivot ----------------------------------------------- */
 
 function renderPivotChartFields() {
@@ -2773,6 +2989,8 @@ for (const tab of document.querySelectorAll("#inspect-tabs button")) {
 $("btn-code").addEventListener("click", showCode);
 $("btn-pivot-save").addEventListener("click", savePivot);
 $("btn-pivot-code").addEventListener("click", showPivotCode);
+$("btn-test-code").addEventListener("click", showTestCode);
+for (const b of document.querySelectorAll("#analyze-tabs button")) b.addEventListener("click", () => selectAnalyzeTab(b.dataset.tab));
 $("btn-pivot-chart").addEventListener("click", togglePivotChart);
 $("btn-run-query").addEventListener("click", runQuery);
 $("btn-query-apply").addEventListener("click", applyQuery);

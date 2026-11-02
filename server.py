@@ -32,6 +32,7 @@ from src.analysis import pivot
 from src.files import FileFormatError, excel_sheets, read_table, write_table
 from src.inspectors import _label
 from src.query import example_queries, quote_ident, run_query, run_query_full, sql_code
+from src.stats import compare
 
 MAX_FILE_SIZE_MB = 200
 PREVIEW_ROWS = 10
@@ -398,6 +399,16 @@ class Session:
         fmt = write_table(self.require_df(), path)
         return {"path": path, "format": fmt}
 
+    def _data_code(self):
+        """Code that rebuilds the current data: read the file, then replay the cleaning steps."""
+        lines = self.read_code.splitlines()
+        if self.log:
+            lines.append("")
+            for entry in self.log:
+                lines += [f"# Step {entry['step']}: {entry['msg']}", *(entry.get("code") or "# (no code recorded)").splitlines()]
+            lines.append("df = df.reset_index(drop=True)")
+        return lines
+
     def _render_chart(self, df, kind, params, style, width, fmt, prelude=()):
         params = {k: v for k, v in (params or {}).items() if v not in (None, "")}
         rc, cmap = chart_theme(style)
@@ -410,7 +421,7 @@ class Session:
             "import pandas as pd",
             "import seaborn as sns",
             "",
-            *self.read_code.splitlines(),
+            *self._data_code(),
             *prelude,
             "",
             *out["code"],
@@ -434,7 +445,7 @@ class Session:
     def cmd_pivot(self, params):
         res = pivot(self.require_df(), **params)
         name = os.path.basename(self.path) if self.path else "data.csv"
-        code = "\n".join(["import pandas as pd", "", *self.read_code.splitlines(), "", res["code"], "print(table)", ""])
+        code = "\n".join(["import numpy as np", "import pandas as pd", "", *self._data_code(), "", res["code"], "print(table)", ""])
         return {**res, "table": table(res["table"]), "code": code, "source": name}
 
     def cmd_pivot_apply(self, params):
@@ -452,6 +463,21 @@ class Session:
         chart_params = {"x": x, "y": value, "agg": "sum", "top_n": "25", "sort": "label" if params.get("sort") == "label" else "desc"}
         prelude = ["", "# Pivot table", *res["code"].splitlines(), "df = table"]
         return self._render_chart(tbl, kind, chart_params, style, width, fmt, prelude=prelude)
+
+    # ---- statistical tests -------------------------------------------------
+
+    def cmd_stats_test(self, outcome, by, groups=None):
+        res = compare(self.require_df(), outcome, by, groups=groups or None)
+        body = res.pop("code_body")
+        res["code"] = "\n".join(["import numpy as np", "import pandas as pd", "from scipy import stats", "",
+                                 *self._data_code(), "", f"# {res['test']}", body, ""])
+        return jsonable(res)
+
+    def cmd_stats_groups(self, column, limit=200):
+        """Distinct values of a column, most common first, for choosing groups to compare."""
+        s = self.require_df()[column].dropna().astype(str)
+        vc = s.value_counts()
+        return {"values": [{"value": k, "count": int(v)} for k, v in vc.head(limit).items()], "total": int(len(vc))}
 
     # ---- SQL ---------------------------------------------------------------
 
@@ -493,7 +519,7 @@ class Session:
 
 # Commands that can take a while run on a background worker so the app stays
 # responsive and they can be cancelled. Everything else is answered inline.
-HEAVY_COMMANDS = {"plot", "preview", "inspect", "query", "query_chart", "pivot", "pivot_chart"}
+HEAVY_COMMANDS = {"plot", "preview", "inspect", "query", "query_chart", "pivot", "pivot_chart", "stats_test"}
 
 
 class Dispatcher:

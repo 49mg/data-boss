@@ -333,12 +333,13 @@
           <section id="section-analyze" class="section section-wide" hidden>
             <div class="page-head">
               <h1>Analyze</h1>
-              <p>Summarize the data by groups. Totals are computed from the raw rows, so a total average is the true overall average.</p>
+              <p>Summarize the data by groups, or test whether a difference or relationship is more than chance.</p>
             </div>
             <div class="segmented" id="analyze-tabs" role="tablist" aria-label="Analysis">
               <button role="tab" aria-selected="true" data-tab="pivot">Pivot table</button>
+              <button role="tab" aria-selected="false" data-tab="tests">Tests</button>
             </div>
-            <div class="viz-layout">
+            <div class="viz-layout" id="analyze-pivot">
               <aside class="card viz-config">
                 <div class="viz-label">Build the table</div>
                 <div id="pivot-fields" class="fields fields-stack"></div>
@@ -369,6 +370,27 @@
                     <div class="viz-loading" id="pivot-chart-loading" hidden><div class="spinner"></div></div>
                   </div>
                   <div class="viz-insights" id="pivot-chart-insights" hidden></div>
+                </div>
+              </div>
+            </div>
+            <div class="viz-layout" id="analyze-tests" hidden>
+              <aside class="card viz-config">
+                <div class="viz-label">What to test</div>
+                <div id="test-fields" class="fields fields-stack"></div>
+                <p class="test-help">The right test is picked from the column types, group sizes, shape and spread. Every step is shown.</p>
+              </aside>
+              <div class="viz-main">
+                <div class="card test-card">
+                  <div class="viz-toolbar">
+                    <div class="viz-heading">
+                      <div class="viz-kind" id="test-name">Statistical test</div>
+                      <div class="viz-sub" id="test-question"></div>
+                    </div>
+                    <div class="viz-actions" id="test-actions" hidden>
+                      <button id="btn-test-code" class="btn btn-sm"><svg class="icon"><use href="#i-code"/></svg>Code</button>
+                    </div>
+                  </div>
+                  <div id="test-output" class="test-output"></div>
                 </div>
               </div>
             </div>

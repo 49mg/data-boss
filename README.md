@@ -54,6 +54,11 @@ A **column detail picker** below the table lets you select any column and view i
 - **Correlations** — strongest relationships between numeric columns
 - **Target** — pick the column you want to explain (sales, rating, churned…); every other column is ranked by how strongly it relates to it (|Pearson r|, correlation ratio η or Cramér's V), with a p-value, a small chart and a plain-language sentence
 
+### Analysis
+
+- **Pivot table** — group by rows and columns with count, sum, mean, median and more; totals are true overall values
+- **Tests** — pick a measure and what to compare it by; the fitting test is chosen from the column types, group count, shape and spread (t-test / Welch, Mann-Whitney, ANOVA / Kruskal-Wallis with pairwise comparisons, chi-square / Fisher, Pearson / Spearman). Each result shows why that test was used, the p-value, effect size, confidence interval, a one-sentence interpretation and caveats, plus the scipy code that reproduces it
+
 ### Data cleaning
 
 
@@ -132,6 +137,7 @@ data-boss/
 │   ├── base.py             # Abstract base classes (BaseDataInspector, BaseDataCleaner, BaseDataVisualizer)
 │   ├── inspectors.py       # DataInspector — read-only data summaries
 │   ├── target.py           # Target analysis: rank columns by relationship to one column
+│   ├── stats.py            # Statistical tests chosen automatically, explained in plain language
 │   ├── cleaners.py         # DataCleaner — dataframe mutations and CSV export
 │   └── visualizers.py      # DataVisualizer — Matplotlib/Seaborn charts
 └── pyproject.toml
