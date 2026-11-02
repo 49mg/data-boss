@@ -73,11 +73,17 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: installer-${{ matrix.os }}
+          # latest*.yml and .blockmap files let installed apps find and download updates.
+          # (macOS is left out of auto-update until the builds are signed.)
           path: |
             dist/*.AppImage
             dist/*.deb
             dist/*.dmg
             dist/*.exe
+            dist/latest.yml
+            dist/latest-linux.yml
+            dist/*.exe.blockmap
+            dist/*.AppImage.blockmap
           if-no-files-found: error
 
   release:

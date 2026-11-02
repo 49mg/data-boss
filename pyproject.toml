@@ -1,6 +1,6 @@
 [project]
 name = "data-boss"
-version = "0.1.0"
+version = "1.0.0"
 description = "Desktop app (Electron + pandas) for exploring, cleaning and visualising CSV datasets"
 readme = "README.md"
 requires-python = ">=3.10"

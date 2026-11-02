@@ -20,4 +20,6 @@ contextBridge.exposeInMainWorld("api", {
   saveText: (text, suggestedName) => ipcRenderer.invoke("save-text", text, suggestedName),
   exportReport: (bodyHtml, title, format, testPath) => ipcRenderer.invoke("export-report", bodyHtml, title, format, testPath, locale.lang),
   onBackendExit: (fn) => ipcRenderer.on("backend-exit", (_e, reason) => fn(reason)),
+  onUpdateReady: (fn) => ipcRenderer.on("update-ready", (_e, version) => fn(version)),
+  installUpdate: () => ipcRenderer.invoke("install-update"),
 });

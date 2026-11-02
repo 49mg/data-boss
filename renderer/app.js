@@ -4782,3 +4782,12 @@ syncDashBadge();
     /* nothing loaded yet */
   }
 })();
+
+/* ---- updates ------------------------------------------------------- */
+
+window.api.onUpdateReady((version) => {
+  $("update-label").textContent = trf("Restart to update to {0}", version);
+  $("btn-update").hidden = false;
+  toast("success", trf("Version {0} is ready. Restart Data Boss to use it.", version));
+});
+$("btn-update").addEventListener("click", () => window.api.installUpdate());

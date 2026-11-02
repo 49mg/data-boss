@@ -2,9 +2,26 @@
 
 [![CI](https://github.com/49mg/data-boss/actions/workflows/ci.yml/badge.svg?branch=desktop-application)](https://github.com/49mg/data-boss/actions/workflows/ci.yml)
 
-A desktop app (Electron + Python/pandas) for exploring and cleaning CSV datasets. Open a file, profile columns, inspect data quality, apply cleaning operations with full undo history, and generate charts — all in a native window.
+**Data Boss** is a free desktop app for analysing data without writing code, and without hiding the code either. Open a CSV, Excel, Parquet or JSON file, find the problems, clean them with full undo, ask questions with SQL, pivot tables and statistical tests, train simple models, chart everything interactively and share the result as a report, a notebook or a Python script that reproduces it exactly.
 
-Built around three focused classes: `DataInspector` for summaries, `DataCleaner` for mutations, and `DataVisualizer` for plots.
+![Data Boss in action](docs/demo.gif)
+
+**Highlights**
+
+- **Clean with confidence:** about 30 operations, each with a live preview of exactly what changes, full undo, and exported pandas code that reproduces the same file byte for byte.
+- **Analysis that explains itself:** pivot tables, trends, segment comparison and statistical tests that pick the right test and say what the result means in plain words, never "proof".
+- **Honest models:** regression, classification, clustering and forecasting with a baseline, held-out test rows, backtests and warnings for leakage and overfitting.
+- **Share it:** interactive charts, a dashboard that redraws after every change, HTML/PDF reports, Jupyter notebooks.
+- **English and Arabic:** a full right-to-left Arabic interface, and Arabic data (including Windows-1256 files) handled correctly.
+- **Private:** your data never leaves your computer (see [Privacy](#privacy)).
+
+| | |
+|---|---|
+| ![Inspect](docs/screenshots/inspect.png) | ![Clean](docs/screenshots/clean.png) |
+| ![Statistical tests](docs/screenshots/tests.png) | ![Model](docs/screenshots/model.png) |
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Arabic interface](docs/screenshots/arabic.png) |
+
+Under the hood: an Electron window talks to a bundled Python engine (pandas, DuckDB, scipy, scikit-learn, statsmodels, Matplotlib). See [CHANGELOG.md](CHANGELOG.md) for what changed in each version.
 
 ## Install
 
@@ -27,6 +44,14 @@ The app is not code-signed yet, so the operating system asks you to confirm the 
 - **Windows** — "Windows protected your PC": click **More info → Run anyway**.
 - **macOS** — "Data Boss can't be opened" or "Apple could not verify…": click **Done**, then open **System Settings → Privacy & Security**, scroll down and click **Open Anyway** next to Data Boss. Only needed once.
 - **Linux AppImage** — if it doesn't start, install FUSE 2: `sudo apt install libfuse2` (on Ubuntu 24.04 and newer: `sudo apt install libfuse2t64`).
+
+### Updates
+
+Windows and Linux (AppImage) installs check GitHub for a newer version when the app starts, download it in the background and show **Restart to update** in the sidebar. On macOS and with the `.deb` package, download new versions from the releases page. To turn automatic updates off, add `"autoUpdate": false` to `settings.json` in the app's data folder (Windows: `%APPDATA%\Data Boss`, Linux: `~/.config/Data Boss`).
+
+## Privacy
+
+Everything happens on your computer. Your files are read locally, the Python engine runs locally, and nothing you load, clean, chart or export is sent anywhere. There is no account, no analytics and no telemetry. The only network request the app makes is the update check above, which asks GitHub whether a newer release exists (it can be turned off). SQL queries cannot read or write files outside the loaded data.
 
 ## Features
 
@@ -257,17 +282,21 @@ PyInstaller cannot cross-compile, so each OS's installer has to be built on that
 
 ### Publishing a release
 
-1. Bump `version` in `package.json` (for example `0.2.0`) and commit.
+Versions follow [semantic versioning](https://semver.org): `MAJOR.MINOR.PATCH`. Record changes in [CHANGELOG.md](CHANGELOG.md) under a new version heading.
+
+1. Bump `version` in `package.json` and `pyproject.toml` (for example `1.0.1`), run `uv lock`, update the changelog and commit.
 2. Tag and push:
 
    ```bash
-   git tag v0.2.0
-   git push origin main v0.2.0
+   git tag v1.0.1
+   git push origin v1.0.1
    ```
 
 3. The **Build installers** workflow builds Windows, macOS (Apple silicon + Intel) and Linux in parallel (~10–15 min) and publishes them on the [Releases page](https://github.com/49mg/data-boss/releases).
 
 To test the builds without publishing, open **Actions → Build installers → Run workflow**. The installers appear as downloadable artifacts on the run.
+
+Each release also carries `latest.yml` (Windows) and `latest-linux.yml` (AppImage). Installed copies read these to find and download updates, so keep them attached to the release.
 
 ### Code signing (optional, removes the security warnings)
 

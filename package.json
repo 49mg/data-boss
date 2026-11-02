@@ -1,7 +1,7 @@
 {
   "name": "data-boss",
   "productName": "Data Boss",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Desktop app for exploring, cleaning and visualising CSV datasets",
   "desktopName": "data-boss.desktop",
   "main": "electron/main.js",
@@ -19,6 +19,9 @@
     "dist:linux": "npm run build:backend && electron-builder --linux --publish never",
     "dist:mac": "npm run build:backend && electron-builder --mac --publish never",
     "dist:win": "npm run build:backend && electron-builder --win --publish never"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11"
   },
   "devDependencies": {
     "electron": "^45.2.1",
@@ -72,6 +75,13 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "shortcutName": "Data Boss"
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "49mg",
+        "repo": "data-boss"
+      }
+    ]
   }
 }

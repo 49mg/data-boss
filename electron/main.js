@@ -353,9 +353,36 @@ ipcMain.handle("export-report", async (_e, bodyHtml, title, format, testPath, la
   return { path: filePath };
 });
 
+// ---- updates --------------------------------------------------------------
+// Packaged Windows and Linux AppImage builds check GitHub Releases for a newer version, download it
+// in the background and offer to restart. macOS needs a signed build for this, so it is skipped there.
+// Set "autoUpdate": false in settings.json (userData folder) to turn it off.
+
+function setupAutoUpdate() {
+  if (!app.isPackaged || process.env.DATABOSS_E2E === "1" || readSettings().autoUpdate === false) return;
+  if (process.platform === "darwin" || (process.platform === "linux" && !process.env.APPIMAGE)) return;
+  let autoUpdater;
+  try {
+    ({ autoUpdater } = require("electron-updater"));
+  } catch (err) {
+    console.error("Updater unavailable:", err.message);
+    return;
+  }
+  autoUpdater.logger = null; // failures are reported below in one line
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on("update-downloaded", (info) => {
+    if (win && !win.isDestroyed()) win.webContents.send("update-ready", info.version);
+  });
+  autoUpdater.on("error", (err) => console.error("Update check failed:", err.message));
+  ipcMain.handle("install-update", () => autoUpdater.quitAndInstall());
+  autoUpdater.checkForUpdates().catch((err) => console.error("Update check failed:", err.message));
+}
+
 app.whenReady().then(() => {
   startBackend();
   createWindow();
+  setupAutoUpdate();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

@@ -1172,5 +1172,8 @@
  "−{0} col": "−{0} عمود",
  "−{0} cols": "−{0} أعمدة",
  "−{0} row": "−{0} صف",
- "−{0} rows": "−{0} صف"
+ "−{0} rows": "−{0} صف",
+ "Restart to update": "أعد التشغيل للتحديث",
+ "Restart to update to {0}": "أعد التشغيل للتحديث إلى {0}",
+ "Version {0} is ready. Restart Data Boss to use it.": "الإصدار {0} جاهز. أعد تشغيل Data Boss لاستخدامه."
 }
