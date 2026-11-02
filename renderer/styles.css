@@ -1622,3 +1622,20 @@ code {
 .source-info .source-notes { display: flex; flex-direction: column; gap: 2px; flex-basis: 100%; }
 .source-info .source-notes p { font-size: 12.5px; color: var(--muted); }
 .source-info .source-notes p::before { content: "ⓘ "; color: var(--info); }
+
+/* ================================================================== */
+/* Analyze: pivot table                                                 */
+/* ================================================================== */
+
+.pivot-output .table-wrap { border: 0; border-radius: 0; margin: 0; max-height: 560px; }
+.pivot-output .note, .pivot-output .inline-loading { margin: 16px 18px; }
+.pivot-output td.cell { text-align: right; font: 12.5px var(--mono); font-variant-numeric: tabular-nums; }
+.pivot-output td.cell.empty { color: color-mix(in srgb, var(--muted) 60%, transparent); }
+.pivot-output th.num { text-align: right; }
+.pivot-output td.rowkey { font-weight: 500; }
+.pivot-output td.total, .pivot-output th.total { font-weight: 700; background: var(--surface2); }
+.pivot-output tr.total-row td { font-weight: 700; background: var(--surface2); border-top: 2px solid var(--border); }
+.pivot-output tbody tr:hover td.cell:not(.total) { outline: 1px solid color-mix(in srgb, var(--primary) 40%, transparent); outline-offset: -1px; }
+.pivot-notes { padding: 0 18px 14px; }
+.pivot-notes:empty { display: none; }
+#pivot-chart-stage { min-height: 360px; }

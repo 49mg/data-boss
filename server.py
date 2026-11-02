@@ -28,6 +28,7 @@ from cycler import cycler
 from matplotlib.colors import LinearSegmentedColormap
 
 from src import DataCleaner, DataInspector, DataVisualizer
+from src.analysis import pivot
 from src.files import FileFormatError, excel_sheets, read_table, write_table
 from src.inspectors import _label
 from src.query import example_queries, quote_ident, run_query, run_query_full, sql_code
@@ -384,6 +385,30 @@ class Session:
     def cmd_plot(self, kind, params=None, style=None, width=None, fmt="png"):
         return self._render_chart(self.require_df(), kind, params, style, width, fmt)
 
+    # ---- pivot -------------------------------------------------------------
+
+    def cmd_pivot(self, params):
+        res = pivot(self.require_df(), **params)
+        name = os.path.basename(self.path) if self.path else "data.csv"
+        code = "\n".join(["import pandas as pd", "", *self.read_code.splitlines(), "", res["code"], "print(table)", ""])
+        return {**res, "table": table(res["table"]), "code": code, "source": name}
+
+    def cmd_pivot_apply(self, params):
+        return self.cmd_clean("PIVOT", {k: v for k, v in params.items() if k != "totals"})
+
+    def cmd_pivot_chart(self, params, value, kind="BAR", style=None, width=None, fmt="png"):
+        rows = params.get("rows") or []
+        if len(rows) != 1:
+            raise ValueError("Charts work with exactly one row grouping.")
+        res = pivot(self.require_df(), **params)
+        tbl = res["table"].iloc[:-1] if res["hasTotals"] else res["table"]  # drop the Total row
+        if value not in tbl.columns:
+            raise ValueError(f"Unknown value column: {value}.")
+        x = rows[0]
+        chart_params = {"x": x, "y": value, "agg": "sum", "top_n": "25", "sort": "label" if params.get("sort") == "label" else "desc"}
+        prelude = ["", "# Pivot table", *res["code"].splitlines(), "df = table"]
+        return self._render_chart(tbl, kind, chart_params, style, width, fmt, prelude=prelude)
+
     # ---- SQL ---------------------------------------------------------------
 
     def cmd_query_info(self):
@@ -424,7 +449,7 @@ class Session:
 
 # Commands that can take a while run on a background worker so the app stays
 # responsive and they can be cancelled. Everything else is answered inline.
-HEAVY_COMMANDS = {"plot", "preview", "inspect", "query", "query_chart"}
+HEAVY_COMMANDS = {"plot", "preview", "inspect", "query", "query_chart", "pivot", "pivot_chart"}
 
 
 class Dispatcher:

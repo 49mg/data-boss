@@ -58,6 +58,7 @@ const SECTION_TITLES = {
   inspect: "Inspect",
   clean: "Clean",
   query: "Query",
+  analyze: "Analyze",
   visualize: "Visualize",
 };
 
@@ -394,6 +395,8 @@ function setState(snapshot) {
   renderChartFields();
   app.inspectStale = true; // refreshed when the Inspect screen is shown
   app.query.infoStale = true;
+  if (app.section === "analyze") renderPivotFields();
+  else app.pivotStale = true;
   showSection(app.section);
 }
 
@@ -452,6 +455,7 @@ function showSection(name) {
   if (app.state && name === "inspect" && app.inspectStale) renderInspect();
   if (app.state && name === "visualize" && app.chartKind && app.chartStale) scheduleRender(0);
   if (app.state && name === "query" && app.query.infoStale) loadQueryInfo();
+  if (app.state && name === "analyze" && app.pivotStale) renderPivotFields(true);
 }
 
 async function loadPage() {
@@ -478,6 +482,9 @@ function onLoaded(snapshot) {
   app.forms = { clean: {}, chart: {} };
   app.chartImage = null;
   app.recent = [];
+  app.pivot = null;
+  app.pivotStale = true;
+  $("pivot-chart-card").hidden = true;
   app.query = { sql: $("sql-editor").value, lastSql: "", info: null, infoStale: true, result: null, chart: null };
   $("query-result-card").hidden = true;
   $("query-chart-card").hidden = true;
@@ -1874,6 +1881,240 @@ function toggleQueryChart() {
 }
 
 /* ------------------------------------------------------------------ */
+/* analyze: pivot table                                                 */
+/* ------------------------------------------------------------------ */
+
+let pivotValues = {};
+
+function pivotSpecs(memory) {
+  const groups = groupCols();
+  const cols = allCols();
+  const counting = !memory.values;
+  const additive = counting || ["count", "sum"].includes(memory.agg || "mean");
+  const specs = [
+    { key: "rows", label: "Rows", type: "multi", options: cols, default: groups.slice(0, 1),
+      hint: "Each distinct combination becomes a row." },
+    { key: "columns", label: "Columns (optional)", type: "select", options: [{ value: "", label: "None" }, ...groups], rerender: true },
+    { key: "values", label: "Values", type: "select", rerender: true,
+      options: [{ value: "", label: "Number of rows" }, ...cols], default: numericCols()[0] || "" },
+  ];
+  if (!counting) {
+    specs.push({ key: "agg", label: "Combine with", type: "select", rerender: true, default: "mean",
+      options: toOptions([["mean", "Mean"], ["sum", "Sum"], ["median", "Median"], ["min", "Min"], ["max", "Max"], ["count", "Count (non-empty)"], ["nunique", "Distinct values"]]) });
+  }
+  if (additive) {
+    const pct = [["none", "Values"], ["total", "% of grand total"]];
+    if (memory.columns) pct.splice(1, 0, ["row", "% of row"], ["column", "% of column"]);
+    specs.push({ key: "percent", label: "Show as", type: "select", options: toOptions(pct) });
+  }
+  specs.push(
+    { key: "sort", label: "Order rows", type: "select",
+      options: toOptions([["label", "By label"], ["value_desc", "Largest first"], ["value_asc", "Smallest first"]]) },
+    TOGGLE("totals", "Show totals", true)
+  );
+  return specs;
+}
+
+function pivotParams(v) {
+  const counting = !v.values;
+  const agg = counting ? "count" : v.agg || "mean";
+  const additive = ["count", "sum"].includes(agg);
+  let percent = additive ? v.percent || "none" : "none";
+  if (!v.columns && (percent === "row" || percent === "column")) percent = "none";
+  return {
+    rows: v.rows || [],
+    columns: v.columns || null,
+    values: v.values || null,
+    agg,
+    percent,
+    sort: v.sort || "label",
+    totals: v.totals !== false,
+  };
+}
+
+function renderPivotFields(run = false) {
+  const memory = (app.forms.pivot ||= {});
+  const specs = pivotSpecs(memory);
+  const rerender = new Set(specs.filter((s) => s.rerender).map((s) => s.key));
+  pivotValues = buildForm($("pivot-fields"), specs, memory, (values, key) => {
+    pivotValues = values;
+    if (key && rerender.has(key)) return renderPivotFields(true);
+    schedulePivot();
+  });
+  if (run || app.section === "analyze") schedulePivot(0);
+  else app.pivotStale = true;
+}
+
+let pivotTimer = null;
+let pivotSeq = 0;
+
+function schedulePivot(delay = 250) {
+  clearTimeout(pivotTimer);
+  if (!(pivotValues.rows && pivotValues.rows.length)) {
+    $("pivot-actions").hidden = true;
+    $("pivot-sub").textContent = "";
+    $("pivot-output").replaceChildren(note("info", "Pick at least one column for the rows."));
+    $("pivot-notes").replaceChildren();
+    return;
+  }
+  pivotTimer = setTimeout(runPivot, delay);
+}
+
+function pivotSubtitle(p) {
+  const what = p.values ? `${p.agg === "nunique" ? "distinct" : p.agg} of ${p.values}` : "number of rows";
+  const by = [p.rows.join(" × "), p.columns].filter(Boolean).join(" by ");
+  const pct = { row: " · % of row", column: " · % of column", total: " · % of grand total" }[p.percent] || "";
+  return `${what} by ${by}${pct}`;
+}
+
+async function runPivot() {
+  if (!app.state) return;
+  const seq = ++pivotSeq;
+  const params = pivotParams(pivotValues);
+  app.pivotStale = false;
+  const out = $("pivot-output");
+  const loading = el("div", { class: "inline-loading" }, el("span", { class: "impact-dot pulse" }), "Building table…");
+  const showLoading = setTimeout(() => seq === pivotSeq && out.replaceChildren(loading), 150);
+  const hideCancel = delayedCancel(loading, "pivot", () => seq === pivotSeq && out.replaceChildren(note("info", "Cancelled.")));
+  try {
+    const res = await callLatest("pivot", "pivot", { params });
+    if (seq !== pivotSeq) return;
+    app.pivot = { params, res };
+    $("pivot-sub").textContent = pivotSubtitle(params);
+    $("pivot-actions").hidden = false;
+    out.replaceChildren(pivotTable(res));
+    $("pivot-notes").replaceChildren(...res.notes.map((t) => el("p", { text: t })));
+    if (!$("pivot-chart-card").hidden) renderPivotChartFields();
+  } catch (err) {
+    if (seq !== pivotSeq || isCancelled(err)) return;
+    app.pivot = null;
+    $("pivot-actions").hidden = true;
+    out.replaceChildren(note("warn", cleanError(err)));
+    $("pivot-notes").replaceChildren();
+  } finally {
+    clearTimeout(showLoading);
+    hideCancel();
+  }
+}
+
+function pivotTable(res) {
+  const t = res.table;
+  const nRows = res.rows.length;
+  const valueCols = res.valueColumns;
+  const isTotalCol = (name) => res.hasTotals && name === "Total" && valueCols.length > 1;
+  const lastIsTotal = res.hasTotals;
+  // Heat scale from the inner cells only (no totals).
+  const inner = [];
+  t.data.forEach((row, i) => {
+    if (lastIsTotal && i === t.data.length - 1) return;
+    row.slice(nRows).forEach((v, j) => {
+      if (typeof v === "number" && !isTotalCol(t.columns[nRows + j])) inner.push(v);
+    });
+  });
+  const lo = Math.min(...inner);
+  const hi = Math.max(...inner);
+  const shade = (v) => (hi > lo ? 4 + ((v - lo) / (hi - lo)) * 34 : 12);
+  const fmtCell = (v) => (v == null ? "—" : res.percent ? `${fnum(v)}%` : fnum(v));
+
+  const head = el("tr", {}, t.columns.map((c, i) =>
+    el("th", { text: c, title: c, class: [i >= nRows ? "num" : "", isTotalCol(c) ? "total" : ""].join(" ") })));
+  const body = t.data.map((row, i) => {
+    const totalRow = lastIsTotal && i === t.data.length - 1;
+    return el("tr", { class: totalRow ? "total-row" : null },
+      row.map((v, j) => {
+        if (j < nRows) return el("td", { class: "rowkey", text: v ?? "", title: v ?? "" });
+        const col = t.columns[j];
+        const cls = ["cell", v == null ? "empty" : "", isTotalCol(col) ? "total" : ""].join(" ");
+        const cell = el("td", { class: cls, text: fmtCell(v) });
+        if (!totalRow && !isTotalCol(col) && typeof v === "number") {
+          cell.style.background = `color-mix(in srgb, var(--primary) ${shade(v).toFixed(0)}%, var(--surface))`;
+        }
+        return cell;
+      }));
+  });
+  return el("div", { class: "table-wrap" }, el("table", {}, el("thead", {}, head), el("tbody", {}, body)));
+}
+
+async function savePivot() {
+  if (!app.pivot) return;
+  try {
+    const res = await call("pivot_apply", { params: app.pivot.params });
+    setState(res.state);
+    toast("success", `${res.message} Undo it from Clean if needed.`);
+  } catch (err) {
+    toast("error", cleanError(err));
+  }
+}
+
+function showPivotCode() {
+  if (!app.pivot) return;
+  openCodeDialog("Pivot table as pandas code", "Builds the same table from your file.", app.pivot.res.code, "pivot_table.py");
+}
+
+/* ---- chart of the pivot ----------------------------------------------- */
+
+function renderPivotChartFields() {
+  const res = app.pivot && app.pivot.res;
+  if (!res) return;
+  const box = $("pivot-chart-fields");
+  if (res.rows.length !== 1) {
+    box.replaceChildren();
+    $("pivot-chart-output").replaceChildren(note("info", "Charts work with exactly one row grouping."));
+    $("pivot-chart-insights").hidden = true;
+    return;
+  }
+  const values = res.valueColumns;
+  if (!values.includes(app.pivotChartValue)) app.pivotChartValue = values.includes("Total") ? "Total" : values[0];
+  const select = el("select", { "aria-label": "Value to chart", onchange: (e) => { app.pivotChartValue = e.target.value; drawPivotChart(); } },
+    values.map((v) => el("option", { value: v, text: v })));
+  select.value = app.pivotChartValue;
+  box.replaceChildren(select);
+  drawPivotChart();
+}
+
+let pivotChartSeq = 0;
+
+async function drawPivotChart() {
+  if (!app.pivot) return;
+  const seq = ++pivotChartSeq;
+  $("pivot-chart-loading").hidden = false;
+  $("pivot-chart-stage").classList.add("busy-stage");
+  try {
+    const res = await callLatest("pivot_chart", "pivot_chart", {
+      params: app.pivot.params,
+      value: app.pivotChartValue,
+      style: chartStyle(),
+      width: Math.max(600, $("pivot-chart-stage").clientWidth - 32),
+    });
+    if (seq !== pivotChartSeq) return;
+    $("pivot-chart-output").replaceChildren(el("img", { src: res.image, alt: `Bar chart of ${app.pivotChartValue}` }));
+    const box = $("pivot-chart-insights");
+    box.hidden = !res.insights.length;
+    box.replaceChildren(el("div", { class: "insights" },
+      el("div", { class: "insights-title" }, icon("i-bulb"), "What this shows"),
+      el("ul", {}, res.insights.map((t) => el("li", { text: t })))));
+  } catch (err) {
+    if (seq !== pivotChartSeq || isCancelled(err)) return;
+    $("pivot-chart-output").replaceChildren(note("error", cleanError(err)));
+    $("pivot-chart-insights").hidden = true;
+  } finally {
+    if (seq === pivotChartSeq) {
+      $("pivot-chart-loading").hidden = true;
+      $("pivot-chart-stage").classList.remove("busy-stage");
+    }
+  }
+}
+
+function togglePivotChart() {
+  const card = $("pivot-chart-card");
+  card.hidden = !card.hidden;
+  if (!card.hidden) {
+    renderPivotChartFields();
+    card.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* visualize                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -2317,6 +2558,9 @@ for (const tab of document.querySelectorAll("#inspect-tabs button")) {
   });
 }
 $("btn-code").addEventListener("click", showCode);
+$("btn-pivot-save").addEventListener("click", savePivot);
+$("btn-pivot-code").addEventListener("click", showPivotCode);
+$("btn-pivot-chart").addEventListener("click", togglePivotChart);
 $("btn-run-query").addEventListener("click", runQuery);
 $("btn-query-apply").addEventListener("click", applyQuery);
 $("btn-query-save").addEventListener("click", saveCurrentQuery);
@@ -2368,6 +2612,7 @@ function setTheme(theme, persist) {
   // Re-render the current chart so its colours match the new theme.
   if (app.chartImage) generateChart();
   if (!$("query-chart-card").hidden && app.query.lastSql) drawQueryChart();
+  if (!$("pivot-chart-card").hidden && app.pivot) drawPivotChart();
 }
 
 $("btn-theme").addEventListener("click", () =>

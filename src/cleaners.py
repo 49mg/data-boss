@@ -1,5 +1,6 @@
 import pandas as pd
 
+from .analysis import pivot
 from .base import BaseDataCleaner
 from .query import run_query_full, sql_code
 
@@ -64,6 +65,7 @@ class DataCleaner(BaseDataCleaner):
             "FILTER_ROWS": self.filter_rows,
             "SORT_ROWS": self.sort_rows,
             "SQL_QUERY": self.sql_query,
+            "PIVOT": self.pivot_table,
         }
 
     # ---- helpers ---------------------------------------------------------
@@ -417,6 +419,14 @@ class DataCleaner(BaseDataCleaner):
         rows, cols = self.df.shape
         return (f"Replaced the data with a SQL query result: {_plural(rows, 'row')} × {_plural(cols, 'column')} "
                 f"(was {before_rows:,} × {before_cols}).")
+
+    def pivot_table(self, rows, columns=None, values=None, agg="count", percent="none", sort="label"):
+        """Replace the data with a pivot table (without the Total row)."""
+        res = pivot(self.df, rows, columns=columns, values=values, agg=agg, totals=False, percent=percent, sort=sort)
+        self.df = res["table"]
+        self.code = res["code"] + "\ndf = table"
+        r, c = self.df.shape
+        return f"Replaced the data with a pivot table: {_plural(r, 'row')} × {_plural(c, 'column')}."
 
     # ---- dispatch --------------------------------------------------------
 
