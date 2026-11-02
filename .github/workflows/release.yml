@@ -36,7 +36,7 @@ jobs:
       CSC_IDENTITY_AUTO_DISCOVERY: "false" # no signing certificates yet
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check tag matches package.json version
         if: startsWith(github.ref, 'refs/tags/v')
@@ -48,13 +48,13 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version-file: .python-version
 
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v10
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -70,7 +70,7 @@ jobs:
       - name: Build installer (electron-builder)
         run: npx electron-builder ${{ matrix.args }} --publish never
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: installer-${{ matrix.os }}
           path: |
@@ -86,12 +86,12 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: dist/*
           generate_release_notes: true
