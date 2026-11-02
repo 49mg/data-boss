@@ -1,6 +1,7 @@
 import pandas as pd
 
 from .base import BaseDataCleaner
+from .query import run_query_full, sql_code
 
 # Characters stripped before parsing "numbers stored as text": thousands
 # separators, spaces, currency and percent signs.
@@ -62,6 +63,7 @@ class DataCleaner(BaseDataCleaner):
             "REPLACE_VALUES": self.replace_values,
             "FILTER_ROWS": self.filter_rows,
             "SORT_ROWS": self.sort_rows,
+            "SQL_QUERY": self.sql_query,
         }
 
     # ---- helpers ---------------------------------------------------------
@@ -404,6 +406,17 @@ class DataCleaner(BaseDataCleaner):
         self.df = self.df.drop(columns=columns)
         self.code = f"df = df.drop(columns={list(columns)!r})"
         return f"Dropped {len(columns)} column(s): {', '.join(map(str, columns))}."
+
+    # ---- SQL ---------------------------------------------------------------
+
+    def sql_query(self, sql):
+        """Replace the data with the result of a SQL query (table name: data)."""
+        before_rows, before_cols = self.df.shape
+        self.df = run_query_full(self.df, sql)
+        self.code = sql_code(sql)
+        rows, cols = self.df.shape
+        return (f"Replaced the data with a SQL query result: {_plural(rows, 'row')} × {_plural(cols, 'column')} "
+                f"(was {before_rows:,} × {before_cols}).")
 
     # ---- dispatch --------------------------------------------------------
 

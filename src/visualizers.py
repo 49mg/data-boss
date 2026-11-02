@@ -405,7 +405,8 @@ class DataVisualizer(BaseDataVisualizer):
         else:
             data = self._clean([x, y], notes)
             series = data.groupby(x)[y].agg(agg)
-            value_label, how = f"{agg} of {y}", agg
+            # One row per category (e.g. an already aggregated query result): plain column name.
+            value_label, how = (y if data[x].is_unique else f"{agg} of {y}"), agg
         series = self._sort_limit(series, sort, int(top_n or 15), notes)
         fig, horiz, size = self._bars(series, title, value_label, horizontal, labels)
 

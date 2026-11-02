@@ -30,6 +30,8 @@
         <symbol id="i-code" viewBox="0 0 24 24"><path d="m8.5 8-4 4 4 4M15.5 8l4 4-4 4M13.5 5.5l-3 13"/></symbol>
         <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5v-2a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/></symbol>
         <symbol id="i-revert" viewBox="0 0 24 24"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3L4.5 9"/><path d="M4.5 4.5V9H9"/></symbol>
+        <symbol id="i-sql" viewBox="0 0 24 24"><ellipse cx="12" cy="5.5" rx="7" ry="2.5"/><path d="M5 5.5v13c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-13"/><path d="M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/></symbol>
+        <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 4 2.4 5 5.4.7-4 3.8 1 5.4-4.8-2.6-4.8 2.6 1-5.4-4-3.8 5.4-.7L12 4Z"/></symbol>
         <symbol id="i-x" viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17"/></symbol>
         <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 15V4m0 0-4 4m4-4 4 4M5 19.5h14"/></symbol>
         <!-- chart types -->
@@ -66,6 +68,9 @@
           <button data-section="clean" class="nav-item">
             <svg class="icon"><use href="#i-clean"/></svg><span>Clean</span>
             <span class="nav-badge" id="nav-clean-badge" hidden></span>
+          </button>
+          <button data-section="query" class="nav-item">
+            <svg class="icon"><use href="#i-sql"/></svg><span>Query</span>
           </button>
           <button data-section="visualize" class="nav-item">
             <svg class="icon"><use href="#i-chart"/></svg><span>Visualize</span>
@@ -242,6 +247,72 @@
                   <div id="preview-after" class="table-wrap"></div>
                 </div>
               </div>
+            </div>
+          </section>
+
+          <!-- Query -->
+          <section id="section-query" class="section section-wide" hidden>
+            <div class="page-head">
+              <h1>Query</h1>
+              <p>Ask questions with SQL. Your dataset is the table <code>data</code>. Running a query never changes your data; Apply does, and it can be undone.</p>
+            </div>
+            <div class="query-layout">
+              <div class="query-main">
+                <div class="card card-flush">
+                  <div class="card-head">
+                    <h2>SQL</h2>
+                    <div class="row-tight">
+                      <span class="kbd-hint"><kbd>Ctrl</kbd><kbd>Enter</kbd></span>
+                      <button id="btn-run-query" class="btn btn-primary btn-sm"><svg class="icon"><use href="#i-play"/></svg>Run</button>
+                    </div>
+                  </div>
+                  <textarea id="sql-editor" class="sql-editor" spellcheck="false" autocomplete="off" aria-label="SQL query"
+                    placeholder="SELECT city, COUNT(*) AS n&#10;FROM data&#10;GROUP BY city&#10;ORDER BY n DESC"></textarea>
+                </div>
+
+                <div class="card card-flush" id="query-result-card" hidden>
+                  <div class="card-head">
+                    <div class="viz-heading">
+                      <h2>Result</h2>
+                      <div class="viz-sub" id="query-meta"></div>
+                    </div>
+                    <div class="viz-actions" id="query-actions">
+                      <button id="btn-query-chart" class="btn btn-sm"><svg class="icon"><use href="#i-chart"/></svg>Chart</button>
+                      <button id="btn-query-save" class="btn btn-sm"><svg class="icon"><use href="#i-star"/></svg>Save</button>
+                      <button id="btn-query-apply" class="btn btn-sm" title="Replace the working data with this result (undoable)"><svg class="icon"><use href="#i-clean"/></svg>Apply as cleaning step</button>
+                    </div>
+                  </div>
+                  <div id="query-output"></div>
+                </div>
+
+                <div class="card card-flush" id="query-chart-card" hidden>
+                  <div class="card-head">
+                    <h2>Chart of the result</h2>
+                    <div class="query-chart-fields" id="query-chart-fields"></div>
+                  </div>
+                  <div class="viz-stage" id="query-chart-stage">
+                    <div id="query-chart-output" class="chart"></div>
+                    <div class="viz-loading" id="query-chart-loading" hidden><div class="spinner"></div></div>
+                  </div>
+                  <div class="viz-insights" id="query-chart-insights" hidden></div>
+                </div>
+              </div>
+
+              <aside class="query-side">
+                <div class="card">
+                  <h2>Columns</h2>
+                  <p class="card-hint">Click to insert into the query.</p>
+                  <div id="query-columns" class="query-columns"></div>
+                </div>
+                <div class="card">
+                  <h2>Examples</h2>
+                  <div id="query-examples" class="query-list"></div>
+                </div>
+                <div class="card">
+                  <h2>Saved queries</h2>
+                  <div id="query-saved" class="query-list"></div>
+                </div>
+              </aside>
             </div>
           </section>
 

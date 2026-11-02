@@ -57,6 +57,7 @@ const SECTION_TITLES = {
   profile: "Column profile",
   inspect: "Inspect",
   clean: "Clean",
+  query: "Query",
   visualize: "Visualize",
 };
 
@@ -66,6 +67,7 @@ const app = {
   page: 0,
   inspectKind: "QUALITY",
   cleanMethod: "",
+  query: { sql: "", lastSql: "", info: null, infoStale: true, result: null, chart: null },
   script: null,
   inspectParams: {}, // per-view options, e.g. duplicate key columns, correlation method
   inspectStale: true,
@@ -212,10 +214,10 @@ function formatCell(v) {
 }
 
 /** Render {columns, index, data} as a table. `types` adds a dtype line under each header. */
-function renderTable(container, payload, { showIndex = true, indexLabel = "", types = false } = {}) {
+function renderTable(container, payload, { showIndex = true, indexLabel = "", types = false, meta: givenMeta = null } = {}) {
   container.replaceChildren();
   if (!payload) return;
-  const meta = types && app.state ? new Map(app.state.columns.map((c) => [c.name, c])) : null;
+  const meta = givenMeta || (types && app.state ? new Map(app.state.columns.map((c) => [c.name, c])) : null);
   const head = el(
     "tr",
     {},
@@ -390,6 +392,7 @@ function setState(snapshot) {
   renderPreview();
   renderChartFields();
   app.inspectStale = true; // refreshed when the Inspect screen is shown
+  app.query.infoStale = true;
   showSection(app.section);
 }
 
@@ -447,6 +450,7 @@ function showSection(name) {
   if (app.state && name === "data") loadPage();
   if (app.state && name === "inspect" && app.inspectStale) renderInspect();
   if (app.state && name === "visualize" && app.chartKind && app.chartStale) scheduleRender(0);
+  if (app.state && name === "query" && app.query.infoStale) loadQueryInfo();
 }
 
 async function loadPage() {
@@ -473,6 +477,9 @@ function onLoaded(snapshot) {
   app.forms = { clean: {}, chart: {} };
   app.chartImage = null;
   app.recent = [];
+  app.query = { sql: $("sql-editor").value, lastSql: "", info: null, infoStale: true, result: null, chart: null };
+  $("query-result-card").hidden = true;
+  $("query-chart-card").hidden = true;
   renderRecent();
   app.cleanMethod = "";
   renderOpList();
@@ -1484,6 +1491,284 @@ function renderPreview() {
 }
 
 /* ------------------------------------------------------------------ */
+/* query (SQL)                                                          */
+/* ------------------------------------------------------------------ */
+
+const SAVED_QUERIES_KEY = "databoss.savedQueries";
+const QUERY_PREVIEW_LIMIT = 500;
+
+function loadSavedQueries() {
+  try {
+    const list = JSON.parse(localStorage.getItem(SAVED_QUERIES_KEY) || "[]");
+    return Array.isArray(list) ? list.filter((q) => q && typeof q.sql === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function storeSavedQueries(list) {
+  try {
+    localStorage.setItem(SAVED_QUERIES_KEY, JSON.stringify(list.slice(0, 30)));
+  } catch {
+    /* storage unavailable: saved queries just won't persist */
+  }
+}
+
+async function loadQueryInfo() {
+  if (!app.state) return;
+  app.query.infoStale = false;
+  try {
+    app.query.info = await window.api.call("query_info", {});
+    renderQuerySide();
+  } catch (err) {
+    toast("error", cleanError(err));
+  }
+}
+
+function insertAtCursor(textarea, text) {
+  const { selectionStart: a, selectionEnd: b, value } = textarea;
+  textarea.value = value.slice(0, a) + text + value.slice(b);
+  textarea.selectionStart = textarea.selectionEnd = a + text.length;
+  textarea.focus();
+  app.query.sql = textarea.value;
+}
+
+function setEditorSql(sql, run = true) {
+  const ed = $("sql-editor");
+  ed.value = sql;
+  app.query.sql = sql;
+  ed.focus();
+  if (run) runQuery();
+}
+
+function renderQuerySide() {
+  const info = app.query.info;
+  if (!info) return;
+  $("query-columns").replaceChildren(
+    ...info.columns.map((c) =>
+      el("button", {
+        class: "col-chip",
+        title: `Insert ${c.sql}`,
+        onclick: () => insertAtCursor($("sql-editor"), c.sql),
+      },
+      el("span", { class: "col-chip-name", text: c.name }),
+      el("span", { class: "col-chip-type", text: c.dtype }))
+    )
+  );
+  $("query-examples").replaceChildren(
+    ...info.examples.map((e) =>
+      el("button", { class: "query-item", title: e.sql, onclick: () => setEditorSql(e.sql) }, icon("i-play"), el("span", { text: e.title }))
+    )
+  );
+  renderSavedQueries();
+}
+
+function renderSavedQueries() {
+  const list = loadSavedQueries();
+  const box = $("query-saved");
+  if (!list.length) {
+    box.replaceChildren(el("p", { class: "query-empty", text: "Save a query to reuse it later." }));
+    return;
+  }
+  box.replaceChildren(
+    ...list.map((q, i) => {
+      const remove = el("button", { class: "query-remove", title: "Remove", "aria-label": `Remove ${q.title}` }, icon("i-x"));
+      remove.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const next = loadSavedQueries();
+        next.splice(i, 1);
+        storeSavedQueries(next);
+        renderSavedQueries();
+      });
+      return el("div", { class: "query-item", role: "button", tabindex: "0", title: q.sql, onclick: () => setEditorSql(q.sql) },
+        icon("i-star"), el("span", { text: q.title }), remove);
+    })
+  );
+}
+
+function saveCurrentQuery() {
+  const sql = ($("sql-editor").value || "").trim();
+  if (!sql) return;
+  const firstLine = sql.split("\n").find((l) => l.trim()) || "Query";
+  const title = firstLine.replace(/\s+/g, " ").slice(0, 60);
+  const list = loadSavedQueries().filter((q) => q.sql !== sql);
+  list.unshift({ title, sql });
+  storeSavedQueries(list);
+  renderSavedQueries();
+  toast("success", "Query saved.");
+}
+
+let querySeq = 0;
+
+async function runQuery() {
+  if (!app.state) return;
+  const sql = ($("sql-editor").value || "").trim();
+  app.query.sql = sql;
+  const out = $("query-output");
+  $("query-result-card").hidden = false;
+  const seq = ++querySeq;
+  const loading = el("div", { class: "inline-loading" }, el("span", { class: "impact-dot pulse" }), "Running query…");
+  const showLoading = setTimeout(() => seq === querySeq && out.replaceChildren(loading), 120);
+  const hideCancel = delayedCancel(loading, "query", () => {
+    if (seq !== querySeq) return;
+    out.replaceChildren(note("info", "Query cancelled."));
+  });
+  try {
+    const res = await callLatest("query", "query", { sql, limit: QUERY_PREVIEW_LIMIT });
+    if (seq !== querySeq) return;
+    app.query.result = res;
+    app.query.lastSql = sql;
+    renderQueryResult(res);
+    if (!$("query-chart-card").hidden) renderQueryChartFields(true);
+  } catch (err) {
+    if (seq !== querySeq || isCancelled(err)) return;
+    app.query.result = null;
+    $("query-meta").textContent = "";
+    $("query-actions").hidden = true;
+    out.replaceChildren(el("pre", { class: "query-error", text: cleanError(err) }));
+  } finally {
+    clearTimeout(showLoading);
+    hideCancel();
+  }
+}
+
+function renderQueryResult(res) {
+  const shown = res.table.data.length;
+  const cols = res.columns.length;
+  $("query-meta").textContent =
+    `${plural(res.total, "row")} × ${plural(cols, "column")} · ${res.ms} ms` +
+    (res.total > shown ? ` · showing the first ${fmt(shown)}` : "");
+  $("query-actions").hidden = false;
+  const out = $("query-output");
+  if (!res.total) {
+    out.replaceChildren(note("info", "The query ran but returned no rows."));
+    return;
+  }
+  const wrap = el("div", { class: "table-wrap" });
+  renderTable(wrap, res.table, { indexLabel: "#", meta: new Map(res.columns.map((c) => [c.name, c])) });
+  out.replaceChildren(wrap);
+}
+
+async function applyQuery() {
+  const sql = app.query.lastSql;
+  if (!sql) return;
+  try {
+    const res = await call("query_apply", { sql });
+    setState(res.state);
+    toast("success", `${res.message} Undo it from Clean if needed.`);
+    runQuery();
+  } catch (err) {
+    toast("error", cleanError(err));
+  }
+}
+
+/* ---- quick chart of the result ------------------------------------------ */
+
+function suggestQueryChart(columns) {
+  const num = columns.filter((c) => c.kind === "numeric").map((c) => c.name);
+  const cat = columns.filter((c) => c.kind === "categorical").map((c) => c.name);
+  const dt = columns.filter((c) => c.dtype.startsWith("datetime")).map((c) => c.name);
+  if (dt.length && num.length) return { kind: "LINE", x: dt[0], y: num[0] };
+  if (cat.length && num.length) return { kind: "BAR", x: cat[0], y: num[num.length - 1] };
+  if (num.length >= 2) return { kind: "SCAT", x: num[0], y: num[1] };
+  if (num.length) return { kind: "HIST", x: num[0], y: "" };
+  if (cat.length) return { kind: "COUNT", x: cat[0], y: "" };
+  return null;
+}
+
+const QUERY_CHART_KINDS = [
+  ["BAR", "Bar"], ["LINE", "Line"], ["SCAT", "Scatter"], ["HIST", "Histogram"], ["COUNT", "Count"],
+];
+
+function queryChartParams({ kind, x, y }) {
+  switch (kind) {
+    case "BAR": return { x, y: y || undefined, agg: y ? "sum" : "count", top_n: "25" };
+    case "LINE": return { x, y, agg: "mean" };
+    case "SCAT": return { x, y };
+    case "HIST": return { column: x };
+    case "COUNT": return { column: x, top_n: "25" };
+    default: return {};
+  }
+}
+
+function renderQueryChartFields(reset = false) {
+  const res = app.query.result;
+  if (!res) return;
+  const cols = res.columns.map((c) => c.name);
+  if (reset || !app.query.chart || !cols.includes(app.query.chart.x)) {
+    app.query.chart = suggestQueryChart(res.columns);
+  }
+  const cfg = app.query.chart;
+  if (!cfg) {
+    $("query-chart-fields").replaceChildren();
+    $("query-chart-output").replaceChildren(note("info", "Nothing to chart in this result."));
+    return;
+  }
+  const needsY = cfg.kind === "BAR" || cfg.kind === "LINE" || cfg.kind === "SCAT";
+  const select = (label, value, options, onChange) => {
+    const s = el("select", { "aria-label": label, onchange: (e) => onChange(e.target.value) },
+      options.map(([v, t]) => el("option", { value: v, text: t })));
+    s.value = value;
+    return s;
+  };
+  $("query-chart-fields").replaceChildren(
+    select("Chart type", cfg.kind, QUERY_CHART_KINDS, (v) => { cfg.kind = v; renderQueryChartFields(); }),
+    select("X axis", cfg.x, cols.map((c) => [c, c]), (v) => { cfg.x = v; drawQueryChart(); }),
+    needsY
+      ? select("Y axis", cfg.y || "", [...(cfg.kind === "BAR" ? [["", "Number of rows"]] : []), ...cols.map((c) => [c, c])],
+          (v) => { cfg.y = v; drawQueryChart(); })
+      : null
+  );
+  drawQueryChart();
+}
+
+let queryChartSeq = 0;
+
+async function drawQueryChart() {
+  const cfg = app.query.chart;
+  if (!cfg || !app.query.lastSql) return;
+  const seq = ++queryChartSeq;
+  $("query-chart-loading").hidden = false;
+  $("query-chart-stage").classList.add("busy-stage");
+  try {
+    const res = await callLatest("query_chart", "query_chart", {
+      sql: app.query.lastSql,
+      kind: cfg.kind,
+      params: queryChartParams(cfg),
+      style: chartStyle(),
+      width: Math.max(600, $("query-chart-stage").clientWidth - 32),
+    });
+    if (seq !== queryChartSeq) return;
+    $("query-chart-output").replaceChildren(el("img", { src: res.image, alt: `${cfg.kind} chart of the query result` }));
+    const box = $("query-chart-insights");
+    box.hidden = !res.insights.length;
+    box.replaceChildren(
+      el("div", { class: "insights" },
+        el("div", { class: "insights-title" }, icon("i-bulb"), "What this shows"),
+        el("ul", {}, res.insights.map((t) => el("li", { text: t }))))
+    );
+  } catch (err) {
+    if (seq !== queryChartSeq || isCancelled(err)) return;
+    $("query-chart-output").replaceChildren(note("error", cleanError(err)));
+    $("query-chart-insights").hidden = true;
+  } finally {
+    if (seq === queryChartSeq) {
+      $("query-chart-loading").hidden = true;
+      $("query-chart-stage").classList.remove("busy-stage");
+    }
+  }
+}
+
+function toggleQueryChart() {
+  const card = $("query-chart-card");
+  card.hidden = !card.hidden;
+  if (!card.hidden) {
+    renderQueryChartFields(true);
+    card.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* visualize                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -1914,6 +2199,17 @@ for (const tab of document.querySelectorAll("#inspect-tabs button")) {
   });
 }
 $("btn-code").addEventListener("click", showCode);
+$("btn-run-query").addEventListener("click", runQuery);
+$("btn-query-apply").addEventListener("click", applyQuery);
+$("btn-query-save").addEventListener("click", saveCurrentQuery);
+$("btn-query-chart").addEventListener("click", toggleQueryChart);
+$("sql-editor").addEventListener("input", (e) => (app.query.sql = e.target.value));
+$("sql-editor").addEventListener("keydown", (e) => {
+  if (e.key === "Tab" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    insertAtCursor(e.target, "  ");
+  }
+});
 $("code-close").addEventListener("click", () => $("code-dialog").close());
 $("code-copy").addEventListener("click", async () => {
   await window.api.copyText(app.script ? app.script.code : "");
@@ -1953,6 +2249,7 @@ function setTheme(theme, persist) {
   syncThemeButton();
   // Re-render the current chart so its colours match the new theme.
   if (app.chartImage) generateChart();
+  if (!$("query-chart-card").hidden && app.query.lastSql) drawQueryChart();
 }
 
 $("btn-theme").addEventListener("click", () =>
@@ -2003,6 +2300,11 @@ window.addEventListener("keydown", (e) => {
     doClean();
     return;
   }
+  if (e.key === "Enter" && app.section === "query") {
+    e.preventDefault();
+    runQuery();
+    return;
+  }
   const tag = document.activeElement && document.activeElement.tagName;
   const key = e.key.toLowerCase();
   if (key === "o") {
@@ -2011,7 +2313,7 @@ window.addEventListener("keydown", (e) => {
   } else if (key === "s" && app.state) {
     e.preventDefault();
     exportCsv();
-  } else if (key === "z" && app.state && app.state.canUndo && tag !== "INPUT") {
+  } else if (key === "z" && app.state && app.state.canUndo && tag !== "INPUT" && tag !== "TEXTAREA") {
     e.preventDefault();
     undo();
   }

@@ -29,6 +29,7 @@ from matplotlib.colors import LinearSegmentedColormap
 
 from src import DataCleaner, DataInspector, DataVisualizer
 from src.inspectors import _label
+from src.query import example_queries, quote_ident, run_query, run_query_full, sql_code
 
 MAX_FILE_SIZE_MB = 200
 PREVIEW_ROWS = 10
@@ -334,8 +335,7 @@ class Session:
             f.write(DataCleaner(df).export_data())
         return {"path": path}
 
-    def cmd_plot(self, kind, params=None, style=None, width=None, fmt="png"):
-        df = self.require_df()
+    def _render_chart(self, df, kind, params, style, width, fmt, prelude=()):
         params = {k: v for k, v in (params or {}).items() if v not in (None, "")}
         rc, cmap = chart_theme(style)
         with mpl.rc_context(rc) if rc else nullcontext():
@@ -349,6 +349,7 @@ class Session:
             "import seaborn as sns",
             "",
             f"df = pd.read_csv({name!r})",
+            *prelude,
             "",
             *out["code"],
             *([f"plt.title({params['title']!r})"] if params.get("title") else []),
@@ -363,10 +364,50 @@ class Session:
             result["image"] = "data:image/png;base64," + base64.b64encode(out["data"]).decode("ascii")
         return result
 
+    def cmd_plot(self, kind, params=None, style=None, width=None, fmt="png"):
+        return self._render_chart(self.require_df(), kind, params, style, width, fmt)
+
+    # ---- SQL ---------------------------------------------------------------
+
+    def cmd_query_info(self):
+        """Schema and starter queries for the Query screen."""
+        df = self.require_df()
+        return {
+            "table": "data",
+            "columns": [
+                {"name": str(c), "sql": quote_ident(c), "dtype": str(df[c].dtype), "kind": column_kind(df[c])}
+                for c in df.columns
+            ],
+            "examples": example_queries(df),
+        }
+
+    def cmd_query(self, sql, limit=500):
+        df = self.require_df()
+        preview, total, ms = run_query(df, sql, limit=max(1, min(int(limit), 2000)))
+        return {
+            "table": table(preview),
+            "total": total,
+            "ms": ms,
+            "columns": [
+                {"name": str(c), "dtype": str(preview[c].dtype), "kind": column_kind(preview[c])} for c in preview.columns
+            ],
+        }
+
+    def cmd_query_apply(self, sql):
+        """Replace the working data with the query result, as an undoable cleaning step."""
+        return self.cmd_clean("SQL_QUERY", {"sql": sql})
+
+    def cmd_query_chart(self, sql, kind, params=None, style=None, width=None, fmt="png"):
+        result = run_query_full(self.require_df(), sql)
+        if result.empty:
+            raise ValueError("The query returned no rows to chart.")
+        prelude = ["", "# Query result", *sql_code(sql).splitlines()]
+        return self._render_chart(result, kind, params, style, width, fmt, prelude=prelude)
+
 
 # Commands that can take a while run on a background worker so the app stays
 # responsive and they can be cancelled. Everything else is answered inline.
-HEAVY_COMMANDS = {"plot", "preview", "inspect"}
+HEAVY_COMMANDS = {"plot", "preview", "inspect", "query", "query_chart"}
 
 
 class Dispatcher:
