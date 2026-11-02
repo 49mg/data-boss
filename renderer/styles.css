@@ -1639,3 +1639,4 @@ code {
 .pivot-notes { padding: 0 18px 14px; }
 .pivot-notes:empty { display: none; }
 #pivot-chart-stage { min-height: 360px; }
+.expr-columns { flex-basis: 100%; margin: -6px 0 14px; max-height: 120px; overflow: auto; }

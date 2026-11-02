@@ -306,6 +306,7 @@ class Session:
             "changes": changes,
             "removedSample": table(before.loc[removed_rows[:sample]]) if len(removed_rows) else None,
             "orderSample": table(after.head(sample)) if order_changed else None,
+            "addedSample": table(after[[c for c in after.columns if str(c) in added_cols]].head(sample)) if added_cols else None,
             "code": cleaner.code,
         }
 

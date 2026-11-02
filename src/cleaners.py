@@ -2,7 +2,7 @@ import pandas as pd
 
 from .analysis import pivot
 from .base import BaseDataCleaner
-from .query import run_query_full, sql_code
+from .query import eval_expression, expression_code, run_query_full, sql_code
 
 # Characters stripped before parsing "numbers stored as text": thousands
 # separators, spaces, currency and percent signs.
@@ -66,6 +66,8 @@ class DataCleaner(BaseDataCleaner):
             "SORT_ROWS": self.sort_rows,
             "SQL_QUERY": self.sql_query,
             "PIVOT": self.pivot_table,
+            "ADD_COLUMN": self.add_column,
+            "DATE_PARTS": self.date_parts,
         }
 
     # ---- helpers ---------------------------------------------------------
@@ -399,6 +401,52 @@ class DataCleaner(BaseDataCleaner):
         )
         lost = f" {_plural(failed, 'value')} could not be read and became missing." if failed else ""
         return f"Converted {_plural(len(cols), 'column')} to dates.{lost}"
+
+    def add_column(self, name, expression):
+        """Add (or replace) a column computed from a SQL expression per row."""
+        name = str(name or "").strip()
+        if not name:
+            raise ValueError("Enter a name for the new column.")
+        existed = name in self.df.columns
+        self.df[name] = eval_expression(self.df, expression)
+        self.code = expression_code(name, expression)
+        verb = "Replaced" if existed else "Added"
+        return f"{verb} column '{name}' = {str(expression).strip()}."
+
+    # part -> (function, pandas code after the column, nullable dtype or None)
+    DATE_PARTS = {
+        "year": (lambda s: s.dt.year, "dt.year", "Int64"),
+        "quarter": (lambda s: s.dt.quarter, "dt.quarter", "Int64"),
+        "month": (lambda s: s.dt.month, "dt.month", "Int64"),
+        "month_name": (lambda s: s.dt.month_name(), "dt.month_name()", None),
+        "week": (lambda s: s.dt.isocalendar().week, "dt.isocalendar().week", "Int64"),
+        "day": (lambda s: s.dt.day, "dt.day", "Int64"),
+        "weekday": (lambda s: s.dt.day_name(), "dt.day_name()", None),
+        "weekday_num": (lambda s: s.dt.dayofweek, "dt.dayofweek", "Int64"),
+        "hour": (lambda s: s.dt.hour, "dt.hour", "Int64"),
+    }
+
+    def date_parts(self, column, parts):
+        """Add columns like <column>_year, <column>_month from a date column."""
+        if column not in self.df.columns:
+            raise ValueError(f"Unknown column: {column}.")
+        if not pd.api.types.is_datetime64_any_dtype(self.df[column]):
+            raise ValueError(f"“{column}” is not a date column. Use Convert to date first.")
+        parts = [p for p in (parts or []) if p]
+        unknown = [p for p in parts if p not in self.DATE_PARTS]
+        if not parts or unknown:
+            raise ValueError("Choose which date parts to add." if not parts else f"Unknown date part: {', '.join(unknown)}.")
+        lines, added = [], []
+        for part in parts:
+            func, accessor, dtype = self.DATE_PARTS[part]
+            new = f"{column}_{part}"
+            values = func(self.df[column])
+            self.df[new] = values.astype(dtype) if dtype else values
+            cast = f".astype({dtype!r})" if dtype else ""
+            lines.append(f"df[{new!r}] = df[{column!r}].{accessor}{cast}")
+            added.append(new)
+        self.code = "\n".join(lines)
+        return f"Added {_plural(len(added), 'column')} from {column}: {', '.join(added)}."
 
     def drop_columns(self, columns):
         if len(columns) == 0:

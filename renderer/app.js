@@ -41,6 +41,10 @@ const CLEAN_OPS = [
     { key: "CLIP_ZSCORE", label: "Clip outliers (z-score)", desc: "Caps values more than 3 standard deviations from the mean. Rows are kept." },
     { key: "ROUND", label: "Round numbers", desc: "Rounds numeric columns to a fixed number of decimal places." },
   ] },
+  { group: "New columns", icon: "i-pivot", items: [
+    { key: "ADD_COLUMN", label: "Calculated column", desc: "Computes a new column for every row with an expression, e.g. price / visits, ROUND(price * 1.1, 2), upper(city), or CASE WHEN totalScore >= 4.5 THEN 'top' ELSE 'other' END. Using an existing name replaces that column." },
+    { key: "DATE_PARTS", label: "Date parts", desc: "Adds columns such as year, month, weekday or hour from a date column, ready for grouping and charts." },
+  ] },
   { group: "Types & columns", icon: "i-columns", items: [
     { key: "TO_NUMERIC", label: "Convert to number", desc: "Turns text like “1,200”, “$80” or “15%” into numbers so you can compute and chart them." },
     { key: "TO_DATETIME", label: "Convert to date", desc: "Parses text into real dates for sorting, filtering and time charts." },
@@ -337,6 +341,7 @@ function buildForm(container, specs, memory, onChange) {
       values[spec.key] = value;
       const input = el("input", {
         type: "text",
+        "data-key": spec.key,
         value,
         oninput: (e) => {
           values[spec.key] = memory[spec.key] = e.target.value;
@@ -1250,6 +1255,22 @@ function cleanSpecs(method, memory) {
         { key: "dayfirst", label: "Ambiguous dates like 03/04", type: "select",
           options: toOptions([["false", "Month first (March 4)"], ["true", "Day first (3 April)"]]) },
       ];
+    case "ADD_COLUMN":
+      return [
+        { key: "name", label: "New column name", type: "text" },
+        { key: "expression", label: "Expression (SQL syntax)", type: "text",
+          hint: "Click a column below to insert it. Text goes in single quotes: 'top'." },
+      ];
+    case "DATE_PARTS": {
+      const dates = datetimeCols();
+      if (!dates.length) return [];
+      return [
+        { key: "column", label: "Date column", type: "select", options: dates },
+        { key: "parts", label: "Parts to add", type: "multi", default: ["year", "month"],
+          options: toOptions([["year", "Year"], ["quarter", "Quarter"], ["month", "Month (number)"], ["month_name", "Month name"],
+            ["week", "Week of year"], ["day", "Day of month"], ["weekday", "Weekday name"], ["weekday_num", "Weekday (0 = Monday)"], ["hour", "Hour"]]) },
+      ];
+    }
     case "RENAME_COLUMN":
       return [
         { key: "old_name", label: "Column to rename", type: "select", options: cols },
@@ -1299,6 +1320,14 @@ function cleanInvalid(method, v) {
     if (name === v.old_name) return "The new name is the same as the old one.";
   }
   if (method === "REPLACE_VALUES" && !v.find) return "Enter the value to find.";
+  if (method === "ADD_COLUMN") {
+    if (!(v.name || "").trim()) return "Enter a name for the new column.";
+    if (!(v.expression || "").trim()) return "Write an expression, e.g. price / visits.";
+  }
+  if (method === "DATE_PARTS") {
+    if (!datetimeCols().length) return "No date columns yet. Use Convert to date on a text column first.";
+    if (!(v.parts && v.parts.length)) return "Choose at least one date part.";
+  }
   return "";
 }
 
@@ -1350,7 +1379,22 @@ function renderCleanFields() {
     schedulePreview();
   };
   cleanValues = buildForm($("clean-fields"), specs, memory, update);
-  if (!specs.length) $("clean-fields").replaceChildren(el("p", { class: "muted no-inputs", text: "No settings needed." }));
+  if (!specs.length) {
+    const msg = method === "DATE_PARTS" ? "No date columns yet. Use Convert to date on a text column first." : "No settings needed.";
+    $("clean-fields").replaceChildren(el("p", { class: "muted no-inputs", text: msg }));
+  }
+  if (method === "ADD_COLUMN") {
+    const input = $("clean-fields").querySelector('input[data-key="expression"]');
+    const chips = el("div", { class: "query-columns expr-columns" },
+      app.state.columns.map((c) => el("button", {
+        class: "col-chip", type: "button", title: `Insert ${sqlName(c.name)}`,
+        onclick: () => {
+          insertAtCursor(input, sqlName(c.name));
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+        },
+      }, el("span", { class: "col-chip-name", text: c.name }), el("span", { class: "col-chip-type", text: c.dtype }))));
+    $("clean-fields").append(chips);
+  }
   schedulePreview(0);
 }
 
@@ -1457,6 +1501,11 @@ function renderImpact({ state, res, text, noChange }) {
   ];
   if (res.changes.rows.length) {
     parts.push(el("div", { class: "impact-sub", text: `Changed cells (first ${res.changes.rows.length} rows)` }), changeTable(res.changes));
+  }
+  if (res.addedSample) {
+    const wrap = el("div", { class: "table-wrap impact-table" });
+    renderTable(wrap, res.addedSample, { indexLabel: "Row" });
+    parts.push(el("div", { class: "impact-sub", text: "New column values (first rows)" }), wrap);
   }
   if (res.removedSample) {
     const wrap = el("div", { class: "table-wrap impact-table" });
@@ -2119,6 +2168,11 @@ function togglePivotChart() {
 /* ------------------------------------------------------------------ */
 
 let chartValues = {};
+
+/** Column name as a SQL identifier (quoted when needed), matching src/query.quote_ident. */
+const SQL_KEYWORDS = new Set(["select", "from", "where", "group", "order", "by", "limit", "table"]);
+const sqlName = (name) =>
+  /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && !SQL_KEYWORDS.has(name.toLowerCase()) ? name : `"${String(name).replace(/"/g, '""')}"`;
 
 const datetimeCols = () => app.state.columns.filter((c) => c.dtype.startsWith("datetime")).map((c) => c.name);
 function uniqueOf(name) {

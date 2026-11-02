@@ -74,6 +74,42 @@ def run_query_full(df, sql):
         con.close()
 
 
+ROW_KEY = "__databoss_row"
+
+
+def eval_expression(df, expression):
+    """Evaluate a SQL expression for every row; returns values aligned with ``df``.
+
+    Rows are matched back by an explicit row number because DuckDB may scan in
+    parallel and does not keep input order without ORDER BY.
+    """
+    expr = (expression or "").strip().rstrip(";")
+    if not expr:
+        raise QueryError("Write an expression, e.g. price / visits")
+    con = duckdb.connect(config={"enable_external_access": False})
+    try:
+        con.register(TABLE, df.assign(**{ROW_KEY: range(len(df))}))
+        try:
+            res = con.sql(f"SELECT ({expr}) AS v FROM {TABLE} ORDER BY {ROW_KEY}").df()
+        except duckdb.Error as e:
+            raise QueryError(_friendly(e)) from e
+    finally:
+        con.close()
+    return res["v"].to_numpy()
+
+
+def expression_code(name, expression):
+    """Code that adds a calculated column the same way the app does."""
+    expr = (expression or "").strip().rstrip(";")
+    sql = f"SELECT ({expr}) AS v FROM {TABLE} ORDER BY {ROW_KEY}"
+    return (
+        "import duckdb\n"
+        "con = duckdb.connect()\n"
+        f"con.register({TABLE!r}, df.assign({ROW_KEY}=range(len(df))))\n"
+        f"df[{name!r}] = con.sql({_triple_quote(sql)}).df()['v'].to_numpy()"
+    )
+
+
 _SIMPLE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
