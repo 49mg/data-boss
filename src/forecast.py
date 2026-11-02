@@ -161,6 +161,13 @@ def forecast(df, date, value=None, agg="sum", freq="M", horizon=None, backtest=N
                      "so seasonal patterns are not modelled.")
     pred = res.forecast(h)
     band = _bands(res, h)
+    nonnegative = bool((y >= 0).all())
+    if nonnegative:
+        # Counts and amounts can't go below zero, even though the simulated noise is symmetric.
+        pred = np.maximum(pred, 0)
+        band = {q: np.maximum(v, 0) for q, v in band.items()}
+        if (band[2.5] == 0).any():
+            notes.append("The lower end of the range is cut off at 0, because the values can't be negative.")
     future = pd.period_range(periods[-1] + 1, periods=h, freq=periods.freq)
 
     # Backtest: hide the last periods, forecast them, compare with reality and a naive forecast.
@@ -205,7 +212,7 @@ def forecast(df, date, value=None, agg="sum", freq="M", horizon=None, backtest=N
         "backtest": bt, "seasonal": seasonal_pattern, "notes": notes,
     }
     out["insights"] = _insights(out, y, unit)
-    out["code"] = _code(date, value, agg, freq, cfg, m, h, bt_h if bt else None, out["notes"])
+    out["code"] = _code(date, value, agg, freq, cfg, m, h, bt_h if bt else None, out["notes"], nonnegative)
     return out
 
 
@@ -232,7 +239,7 @@ def _insights(out, y, unit):
     return lines
 
 
-def _code(date, value, agg, freq, cfg, m, h, bt_h, notes):
+def _code(date, value, agg, freq, cfg, m, h, bt_h, notes, nonnegative=False):
     incomplete = any("incomplete" in n for n in notes)
     lines = [
         "from statsmodels.tsa.holtwinters import ExponentialSmoothing",
@@ -256,6 +263,7 @@ def _code(date, value, agg, freq, cfg, m, h, bt_h, notes):
         "model = fit(y)",
         f"forecast = model.forecast({h})",
         f"sims = model.simulate({h}, repetitions={SIMULATIONS}, error='add', anchor='end', rng=np.random.default_rng({SEED}))",
+        *(["forecast, sims = np.maximum(forecast, 0), np.maximum(sims, 0)  # values can't be negative"] if nonnegative else []),
         f"future = pd.period_range(series.index[-1] + 1, periods={h}, freq=series.index.freq)",
         "print(pd.DataFrame({'forecast': forecast, 'low80': np.percentile(sims, 10, axis=1),",
         "                    'high80': np.percentile(sims, 90, axis=1)}, index=future))",

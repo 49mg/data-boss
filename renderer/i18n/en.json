@@ -1178,5 +1178,6 @@
  "Version {0} is ready. Restart Data Boss to use it.": "Version {0} is ready. Restart Data Boss to use it.",
  "— Has {0} distinct values for {1} rows (almost one row per value, like an ID or contact detail); groups are too small to compare.": "— Has {0} distinct values for {1} rows (almost one row per value, like an ID or contact detail); groups are too small to compare.",
  "“{0}” holds dates stored as text": "“{0}” holds dates stored as text",
- "Converting it to dates enables trends, forecasts, date parts and correct sorting.": "Converting it to dates enables trends, forecasts, date parts and correct sorting."
+ "Converting it to dates enables trends, forecasts, date parts and correct sorting.": "Converting it to dates enables trends, forecasts, date parts and correct sorting.",
+ "The lower end of the range is cut off at 0, because the values can't be negative.": "The lower end of the range is cut off at 0, because the values can't be negative."
 }
