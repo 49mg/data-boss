@@ -74,6 +74,7 @@ const SECTION_TITLES = {
   query: "Query",
   analyze: "Analyze",
   visualize: "Visualize",
+  report: "Report",
 };
 
 const app = {
@@ -477,6 +478,7 @@ function showSection(name) {
   if (app.state && name === "data") loadPage();
   if (app.state && name === "inspect" && app.inspectStale) renderInspect();
   if (app.state && name === "visualize" && app.chartKind && app.chartStale) scheduleRender(0);
+  if (app.state && name === "report") renderReport();
   if (app.state && name === "query" && app.query.infoStale) loadQueryInfo();
   if (app.state && name === "analyze") {
     if (app.analyzeTab === "tests") app.testStale !== false && renderTestFields(true);
@@ -3504,3 +3506,290 @@ for (const btn of document.querySelectorAll("#nav .nav-item")) btn.disabled = tr
 renderChartTiles();
 syncInspectTabs();
 renderOpList();
+
+/* ------------------------------------------------------------------ */
+/* report builder                                                       */
+/* ------------------------------------------------------------------ */
+
+const REPORT_KEY = "databoss.report.v1";
+const REPORT_LABELS = { heading: "Heading", text: "Text note", chart: "Chart", table: "Table", trend: "Trend", test: "Test result", insights: "Findings" };
+
+function loadReport() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(REPORT_KEY) || "null");
+    if (saved && Array.isArray(saved.blocks)) return saved;
+  } catch {
+    /* storage unavailable or corrupt: start fresh */
+  }
+  return { title: "Data report", blocks: [] };
+}
+
+function saveReport() {
+  try {
+    const text = JSON.stringify(app.report);
+    if (text.length < 4_500_000) localStorage.setItem(REPORT_KEY, text);
+    else localStorage.removeItem(REPORT_KEY); // too big to keep between sessions
+  } catch {
+    /* not critical */
+  }
+}
+
+app.report = loadReport();
+let reportSeq = Date.now();
+
+function syncReportBadge() {
+  const n = app.report.blocks.length;
+  const badge = $("nav-report-badge");
+  badge.hidden = !n;
+  badge.textContent = String(n);
+}
+
+function addToReport(block, quiet = false) {
+  app.report.blocks.push({ id: `b${++reportSeq}`, source: app.state ? app.state.fileName : null, ...block });
+  saveReport();
+  syncReportBadge();
+  if (app.section === "report") renderReport();
+  if (!quiet) toast("success", `Added to the report (${plural(app.report.blocks.length, "item")}).`);
+}
+
+/** Matplotlib colours from the light theme, so report charts print well whatever the app theme is. */
+function lightChartStyle() {
+  const root = document.documentElement;
+  const before = root.dataset.theme;
+  root.dataset.theme = "light";
+  try {
+    return chartStyle();
+  } finally {
+    if (before === undefined) delete root.dataset.theme;
+    else root.dataset.theme = before;
+  }
+}
+
+async function reportChart() {
+  if (!app.chartImage || !app.chartKind) return;
+  try {
+    const res = await window.api.call("plot", { kind: app.chartKind, params: app.chartParams, style: lightChartStyle(), width: 900 });
+    addToReport({ type: "chart", title: `${chartLabel()}: ${chartSubtitle(app.chartKind, chartValues)}`, image: res.image,
+      insights: res.insights, notes: res.notes });
+  } catch (err) {
+    toast("error", cleanError(err));
+  }
+}
+
+function reportPivot() {
+  if (!app.pivot) return;
+  const t = app.pivot.res.table;
+  addToReport({ type: "table", title: `Pivot: ${pivotSubtitle(app.pivot.params)}`,
+    table: { columns: t.columns, data: t.data.slice(0, 200) }, truncated: t.data.length > 200,
+    notes: app.pivot.res.notes, percent: app.pivot.res.percent, valueColumns: app.pivot.res.valueColumns });
+}
+
+function reportTrend() {
+  if (!app.trend) return;
+  const res = app.trend.res;
+  const svg = document.querySelector("#trend-output .trend-svg");
+  addToReport({ type: "trend", title: `Trend: ${res.label} per ${res.unit}`, insights: res.insights, notes: res.notes,
+    svg: svg ? svg.outerHTML : null });
+}
+
+function reportSegment() {
+  if (!app.segment) return;
+  const s = app.segment;
+  const clear = s.columns.filter((c) => c.significant).slice(0, 8).map((c) => c.sentence);
+  addToReport({ type: "insights", title: `Segment: ${s.label}`,
+    lead: `${s.summary} The segment has ${fmt(s.segmentRows)} rows; the rest has ${fmt(s.restRows)}.`,
+    items: clear, notes: s.caveats });
+}
+
+function reportTest() {
+  if (!app.test) return;
+  const r = app.test;
+  const stats = [["p-value", pText(r.p)]];
+  if (r.effect && r.effect.value != null) stats.push([`${r.effect.name} (${r.effect.size})`, r.effect.value.toFixed(2)]);
+  if (r.ci) stats.push([`95% CI · ${r.ci.label}`, `${fnum(r.ci.low)} … ${fnum(r.ci.high)}`]);
+  stats.push(["Rows used", fmt(r.n)]);
+  addToReport({ type: "test", title: `${r.test}: ${r.question}`, sentence: r.interpretation, significant: r.significant,
+    stats, why: r.why, notes: r.caveats });
+}
+
+/* ---- rendering a block as part of the document ---------------------- */
+
+function svgFromMarkup(markup) {
+  if (!markup) return null;
+  const doc = new DOMParser().parseFromString(markup, "image/svg+xml");
+  const root = doc.documentElement;
+  if (!root || root.nodeName !== "svg") return null;
+  root.querySelectorAll("script, foreignObject").forEach((n) => n.remove());
+  return document.importNode(root, true);
+}
+
+function reportBlockBody(b) {
+  const notes = b.notes && b.notes.length ? el("ul", { class: "r-small" }, b.notes.map((t) => el("li", { text: t }))) : null;
+  switch (b.type) {
+    case "heading":
+      return el("h2", { text: b.text || "Untitled section" });
+    case "text":
+      return el("p", { class: "r-text", text: b.text || "" });
+    case "chart":
+      return el("div", {},
+        el("h3", { text: b.title }),
+        el("img", { src: b.image, alt: b.title }),
+        b.insights && b.insights.length ? el("ul", {}, b.insights.map((t) => el("li", { text: t }))) : null,
+        notes);
+    case "table": {
+      const t = b.table;
+      const numeric = t.columns.map((c, i) => t.data.some((r) => typeof r[i] === "number"));
+      return el("div", {},
+        el("h3", { text: b.title }),
+        el("table", {},
+          el("thead", {}, el("tr", {}, t.columns.map((c, i) => el("th", { text: c, class: numeric[i] ? "num" : null })))),
+          el("tbody", {}, t.data.map((r) =>
+            el("tr", { class: r[0] === "Total" ? "r-total" : null },
+              r.map((v, i) => el("td", { class: numeric[i] ? "num" : null,
+                text: v == null ? "" : typeof v === "number" ? (b.percent && i >= t.columns.length - b.valueColumns.length ? fmtPct(v) : fnum(v)) : String(v) })))))),
+        b.truncated ? el("p", { class: "r-small", text: "Showing the first 200 rows." }) : null,
+        notes);
+    }
+    case "trend":
+      return el("div", {},
+        el("h3", { text: b.title }),
+        el("div", { class: "r-callout" }, el("ul", {}, b.insights.map((t) => el("li", { text: t })))),
+        b.svg ? el("div", { class: "r-chart" }, svgFromMarkup(b.svg)) : null,
+        notes);
+    case "test":
+      return el("div", {},
+        el("h3", { text: b.title }),
+        el("div", { class: `r-callout ${b.significant ? "good" : ""}` }, el("p", { text: b.sentence })),
+        el("div", { class: "r-stats" }, b.stats.map(([k, v]) => el("div", { class: "r-stat" }, el("b", { text: v }), el("span", { text: k })))),
+        b.why && b.why.length ? el("p", { class: "r-small", text: `Why this test: ${b.why.join("; ")}.` }) : null,
+        notes);
+    case "insights":
+      return el("div", {},
+        el("h3", { text: b.title }),
+        el("div", { class: "r-callout" }, el("p", { text: b.lead }),
+          b.items.length ? el("ul", {}, b.items.map((t) => el("li", { text: t }))) : null),
+        notes);
+    default:
+      return null;
+  }
+}
+
+function reportSources() {
+  return [...new Set(app.report.blocks.map((b) => b.source).filter(Boolean))];
+}
+
+/** The finished document: what the export contains. */
+function reportDocument() {
+  const date = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+  const sources = reportSources();
+  return el("article", { class: "report-doc" },
+    el("h1", { text: app.report.title || "Data report" }),
+    el("p", { class: "r-meta", text: [`Created ${date} with Data Boss`, sources.length ? `Data: ${sources.join(", ")}` : null].filter(Boolean).join(" · ") }),
+    app.report.blocks
+      .filter((b) => !((b.type === "text" || b.type === "heading") && !(b.text || "").trim()))
+      .map((b) => el("section", { class: "r-block" }, reportBlockBody(b))),
+    el("p", { class: "r-footer", text: "Statistics are computed from the data as loaded and cleaned in Data Boss. Associations and differences describe this data; they do not by themselves show cause." }));
+}
+
+/* ---- editor ------------------------------------------------------------ */
+
+function moveBlock(i, delta) {
+  const blocks = app.report.blocks;
+  const j = i + delta;
+  if (j < 0 || j >= blocks.length) return;
+  [blocks[i], blocks[j]] = [blocks[j], blocks[i]];
+  saveReport();
+  renderReport();
+}
+
+function renderReport() {
+  syncReportBadge();
+  $("report-title").value = app.report.title || "";
+  const blocks = app.report.blocks;
+  const editor = $("report-editor");
+  const hasContent = blocks.length > 0;
+  for (const id of ["btn-report-html", "btn-report-pdf", "btn-report-clear"]) $(id).disabled = !hasContent;
+  if (!hasContent) {
+    editor.replaceChildren(el("div", { class: "card report-empty" },
+      el("h2", { text: "Your report is empty" }),
+      el("p", { class: "card-hint", text: "Use the Report button on a chart (Visualize), a pivot table, a trend, a segment comparison or a test result (Analyze). Add headings and notes here to tell the story." })));
+    return;
+  }
+  const items = blocks.map((b, i) => {
+    let body;
+    if (b.type === "heading" || b.type === "text") {
+      const input = el(b.type === "text" ? "textarea" : "input", {
+        class: b.type === "text" ? "report-textarea" : "report-heading-input",
+        type: b.type === "text" ? null : "text",
+        placeholder: b.type === "text" ? "Write what the reader should take away…" : "Section heading",
+        rows: b.type === "text" ? 4 : null,
+        "aria-label": REPORT_LABELS[b.type],
+        oninput: (e) => { b.text = e.target.value; saveReport(); },
+      });
+      input.value = b.text || "";
+      body = input;
+    } else {
+      body = el("div", { class: "report-doc report-inline" }, reportBlockBody(b));
+    }
+    return el("div", { class: "report-item card", "data-type": b.type },
+      el("div", { class: "report-item-bar" },
+        el("span", { class: "chip", text: REPORT_LABELS[b.type] || b.type }),
+        b.source && !["heading", "text"].includes(b.type) ? el("span", { class: "muted report-item-src", text: b.source }) : null,
+        el("span", { class: "report-item-spacer" }),
+        el("button", { class: "icon-btn", title: "Move up", "aria-label": "Move up", disabled: i === 0, onclick: () => moveBlock(i, -1) }, icon("i-up")),
+        el("button", { class: "icon-btn", title: "Move down", "aria-label": "Move down", disabled: i === blocks.length - 1, onclick: () => moveBlock(i, 1) }, icon("i-down")),
+        el("button", { class: "icon-btn", title: "Remove", "aria-label": "Remove", onclick: () => {
+          blocks.splice(i, 1);
+          saveReport();
+          renderReport();
+        } }, icon("i-x"))),
+      body);
+  });
+  editor.replaceChildren(...items);
+}
+
+async function exportReport(format, testPath) {
+  if (!app.report.blocks.length) return null;
+  try {
+    const res = await window.api.exportReport(reportDocument().outerHTML, app.report.title || "Data report", format, testPath);
+    if (res) toast("success", `Report saved to ${res.path}`);
+    return res;
+  } catch (err) {
+    toast("error", cleanError(err));
+    return null;
+  }
+}
+
+$("report-title").addEventListener("input", (e) => { app.report.title = e.target.value; saveReport(); });
+$("btn-report-heading").addEventListener("click", () => { addToReport({ type: "heading", text: "" }, true); focusLastReportInput(); });
+$("btn-report-text").addEventListener("click", () => { addToReport({ type: "text", text: "" }, true); focusLastReportInput(); });
+$("btn-report-html").addEventListener("click", () => exportReport("html"));
+$("btn-report-pdf").addEventListener("click", () => exportReport("pdf"));
+$("btn-report-clear").addEventListener("click", (e) => {
+  const btn = e.currentTarget;
+  if (btn.dataset.armed !== "1") {
+    btn.dataset.armed = "1";
+    btn.textContent = "Click again to clear";
+    setTimeout(() => { btn.dataset.armed = ""; btn.textContent = "Clear"; }, 3000);
+    return;
+  }
+  btn.dataset.armed = "";
+  btn.textContent = "Clear";
+  app.report.blocks = [];
+  saveReport();
+  renderReport();
+});
+$("btn-report-chart").addEventListener("click", reportChart);
+$("btn-report-pivot").addEventListener("click", reportPivot);
+$("btn-report-trend").addEventListener("click", reportTrend);
+$("btn-report-segment").addEventListener("click", reportSegment);
+$("btn-report-test").addEventListener("click", reportTest);
+
+function focusLastReportInput() {
+  requestAnimationFrame(() => {
+    const inputs = $("report-editor").querySelectorAll(".report-textarea, .report-heading-input");
+    const last = inputs[inputs.length - 1];
+    if (last) { last.focus(); last.scrollIntoView({ block: "center" }); }
+  });
+}
+syncReportBadge();

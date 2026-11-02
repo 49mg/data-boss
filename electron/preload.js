@@ -12,5 +12,6 @@ contextBridge.exposeInMainWorld("api", {
   copyText: (text) => ipcRenderer.invoke("copy-text", text),
   copyImage: (dataUrl) => ipcRenderer.invoke("copy-image", dataUrl),
   saveText: (text, suggestedName) => ipcRenderer.invoke("save-text", text, suggestedName),
+  exportReport: (bodyHtml, title, format, testPath) => ipcRenderer.invoke("export-report", bodyHtml, title, format, testPath),
   onBackendExit: (fn) => ipcRenderer.on("backend-exit", (_e, reason) => fn(reason)),
 });

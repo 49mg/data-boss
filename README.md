@@ -61,6 +61,10 @@ A **column detail picker** below the table lets you select any column and view i
 - **Compare segment** — describe a group of rows (e.g. churned = yes, or plan = pro and fee > 40) and every other column is compared with the rest of the data: averages or category shares side by side, the fitting test per column, p-values adjusted for testing many columns (Holm), clear differences ranked first
 - **Tests** — pick a measure and what to compare it by; the fitting test is chosen from the column types, group count, shape and spread (t-test / Welch, Mann-Whitney, ANOVA / Kruskal-Wallis with pairwise comparisons, chi-square / Fisher, Pearson / Spearman). Each result shows why that test was used, the p-value, effect size, confidence interval, a one-sentence interpretation and caveats, plus the scipy code that reproduces it
 
+### Report
+
+Every chart, pivot table, trend, segment comparison and test result has a **Report** button. The Report screen collects them with your own headings and notes; reorder or remove items, then **Export HTML** (one self-contained file with images inlined, opens offline in any browser) or **Export PDF**. Charts in the report are always drawn in light colours so they print well, and the report is kept between sessions.
+
 ### Data cleaning
 
 
@@ -137,6 +141,7 @@ data-boss/
 │   ├── styles.css          # UI styles (light + dark)
 │   ├── app.js              # UI logic
 │   ├── theme.js            # Applies the saved/system theme before first paint
+│   ├── report.css          # Styles for the report preview and exported HTML/PDF
 │   ├── citymap.js          # Decorative city-map background
 │   └── fonts/              # Bundled Geist font (SIL Open Font License)
 ├── server.py               # Python backend: JSON-lines over stdin/stdout, holds dataframe state

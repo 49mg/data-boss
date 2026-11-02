@@ -9,6 +9,7 @@
     <meta name="description" content="Explore, clean and visualize CSV datasets." />
     <title>Data Boss</title>
     <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="report.css" />
     <script src="theme.js"></script>
   </head>
   <body>
@@ -24,6 +25,10 @@
         <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11m0 0-4-4m4 4 4-4M5 19.5h14"/></symbol>
         <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 7 5 11l4 4"/><path d="M5 11h9.5a4.5 4.5 0 0 1 0 9H12"/></symbol>
         <symbol id="i-theme" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16Z" class="fill"/></symbol>
+        <symbol id="i-report" viewBox="0 0 24 24"><path d="M6.5 3.5h11v17h-11z"/><path d="M9 16.5v-3M12 16.5v-6M15 16.5v-4.5M9 7h6"/></symbol>
+        <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+        <symbol id="i-up" viewBox="0 0 24 24"><path d="m6 14 6-6 6 6"/></symbol>
+        <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 10 6 6 6-6"/></symbol>
         <symbol id="i-file" viewBox="0 0 24 24"><path d="M6.5 3.5h7l4 4v13h-11v-17Z"/><path d="M13.5 3.5v4h4M9 12h6M9 15.5h6"/></symbol>
         <symbol id="i-play" viewBox="0 0 24 24"><path d="M5 12h12m0 0-5-5m5 5-5 5"/></symbol>
         <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="m20.5 16-5-5-8 8.5"/></symbol>
@@ -78,6 +83,10 @@
           </button>
           <button data-section="visualize" class="nav-item">
             <svg class="icon"><use href="#i-chart"/></svg><span>Visualize</span>
+          </button>
+          <button data-section="report" class="nav-item">
+            <svg class="icon"><use href="#i-report"/></svg><span>Report</span>
+            <span class="nav-badge" id="nav-report-badge" hidden></span>
           </button>
         </nav>
 
@@ -355,6 +364,7 @@
                     </div>
                     <div class="viz-actions" id="pivot-actions" hidden>
                       <button id="btn-pivot-chart" class="btn btn-sm"><svg class="icon"><use href="#i-chart"/></svg>Chart</button>
+                      <button id="btn-report-pivot" class="btn btn-sm" title="Add to the report"><svg class="icon"><use href="#i-report"/></svg>Report</button>
                       <button id="btn-pivot-code" class="btn btn-sm"><svg class="icon"><use href="#i-code"/></svg>Code</button>
                       <button id="btn-pivot-save" class="btn btn-sm" title="Replace the working data with this table, without the Total row (undoable)"><svg class="icon"><use href="#i-clean"/></svg>Save as dataset</button>
                     </div>
@@ -388,6 +398,7 @@
                       <div class="viz-sub" id="trend-sub"></div>
                     </div>
                     <div class="viz-actions" id="trend-actions" hidden>
+                      <button id="btn-report-trend" class="btn btn-sm" title="Add to the report"><svg class="icon"><use href="#i-report"/></svg>Report</button>
                       <button id="btn-trend-code" class="btn btn-sm"><svg class="icon"><use href="#i-code"/></svg>Code</button>
                     </div>
                   </div>
@@ -409,6 +420,7 @@
                       <div class="viz-sub" id="segment-sub"></div>
                     </div>
                     <div class="viz-actions" id="segment-actions" hidden>
+                      <button id="btn-report-segment" class="btn btn-sm" title="Add to the report"><svg class="icon"><use href="#i-report"/></svg>Report</button>
                       <button id="btn-segment-code" class="btn btn-sm"><svg class="icon"><use href="#i-code"/></svg>Code</button>
                     </div>
                   </div>
@@ -430,6 +442,7 @@
                       <div class="viz-sub" id="test-question"></div>
                     </div>
                     <div class="viz-actions" id="test-actions" hidden>
+                      <button id="btn-report-test" class="btn btn-sm" title="Add to the report"><svg class="icon"><use href="#i-report"/></svg>Report</button>
                       <button id="btn-test-code" class="btn btn-sm"><svg class="icon"><use href="#i-code"/></svg>Code</button>
                     </div>
                   </div>
@@ -440,6 +453,25 @@
           </section>
 
           <!-- Visualize -->
+          <section id="section-report" class="section" hidden>
+            <div class="page-head">
+              <h1>Report</h1>
+              <p>Collect charts, tables, trends and test results with your own notes, then export one file to share. HTML opens in any browser; PDF is ready to print or email.</p>
+            </div>
+            <div class="report-toolbar card">
+              <label class="field report-title-field"><span>Report title</span><input id="report-title" type="text" maxlength="160" /></label>
+              <div class="report-buttons">
+                <button id="btn-report-heading" class="btn btn-sm"><svg class="icon"><use href="#i-plus"/></svg>Heading</button>
+                <button id="btn-report-text" class="btn btn-sm"><svg class="icon"><use href="#i-plus"/></svg>Text note</button>
+                <span class="report-sep"></span>
+                <button id="btn-report-html" class="btn btn-sm"><svg class="icon"><use href="#i-download"/></svg>Export HTML</button>
+                <button id="btn-report-pdf" class="btn btn-sm btn-primary"><svg class="icon"><use href="#i-download"/></svg>Export PDF</button>
+                <button id="btn-report-clear" class="btn btn-sm btn-ghost">Clear</button>
+              </div>
+            </div>
+            <div id="report-editor" class="report-editor"></div>
+          </section>
+
           <section id="section-visualize" class="section section-wide" hidden>
             <div class="page-head">
               <h1>Visualize</h1>
@@ -472,6 +504,7 @@
                       <button id="btn-save-svg" class="btn btn-sm" title="Save as SVG (scalable, for print)">
                         <svg class="icon"><use href="#i-download"/></svg>SVG
                       </button>
+<button id="btn-report-chart" class="btn btn-sm" title="Add to the report"><svg class="icon"><use href="#i-report"/></svg>Report</button>
                       <button id="btn-chart-code" class="btn btn-sm" title="Python code for this chart">
                         <svg class="icon"><use href="#i-code"/></svg>Code
                       </button>

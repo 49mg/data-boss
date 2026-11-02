@@ -223,6 +223,71 @@ ipcMain.handle("save-text", async (_e, text, suggestedName) => {
   return { path: filePath };
 });
 
+// ---- report export --------------------------------------------------------
+
+const escapeHtml = (t) => String(t).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+async function reportHtml(bodyHtml, title) {
+  const css = await fs.promises.readFile(path.join(__dirname, "..", "renderer", "report.css"), "utf-8");
+  return [
+    "<!doctype html>",
+    '<html lang="en">',
+    "<head>",
+    '<meta charset="utf-8">',
+    '<meta name="viewport" content="width=device-width, initial-scale=1">',
+    '<meta name="generator" content="Data Boss">',
+    `<title>${escapeHtml(title || "Report")}</title>`,
+    `<style>html,body{margin:0;background:#fff}\n${css}</style>`,
+    "</head>",
+    `<body>${bodyHtml}</body>`,
+    "</html>",
+  ].join("\n");
+}
+
+async function htmlToPdf(html) {
+  const tmp = path.join(app.getPath("temp"), `databoss-report-${process.pid}-${Date.now()}.html`);
+  await fs.promises.writeFile(tmp, html, "utf-8");
+  const pdfWin = new BrowserWindow({
+    show: false,
+    webPreferences: { javascript: false, sandbox: true, contextIsolation: true, nodeIntegration: false },
+  });
+  try {
+    await pdfWin.loadFile(tmp);
+    return await pdfWin.webContents.printToPDF({
+      printBackground: true,
+      pageSize: "A4",
+      margins: { top: 0.6, bottom: 0.6, left: 0.6, right: 0.6 },
+    });
+  } finally {
+    pdfWin.destroy();
+    fs.promises.unlink(tmp).catch(() => {});
+  }
+}
+
+const REPORT_FILTERS = {
+  html: { name: "Web page (HTML)", extensions: ["html"] },
+  pdf: { name: "PDF document", extensions: ["pdf"] },
+};
+
+ipcMain.handle("export-report", async (_e, bodyHtml, title, format, testPath) => {
+  const fmt = format === "pdf" ? "pdf" : "html";
+  let filePath = process.env.DATABOSS_E2E === "1" && testPath ? String(testPath) : null;
+  if (!filePath) {
+    const safe = String(title || "report").replace(/[\\/:*?"<>|]+/g, " ").trim().slice(0, 80) || "report";
+    const res = await dialog.showSaveDialog(win, {
+      title: fmt === "pdf" ? "Export report as PDF" : "Export report as HTML",
+      defaultPath: `${safe}.${fmt}`,
+      filters: [REPORT_FILTERS[fmt]],
+    });
+    if (res.canceled || !res.filePath) return null;
+    filePath = res.filePath;
+  }
+  const html = await reportHtml(String(bodyHtml), title);
+  if (fmt === "pdf") await fs.promises.writeFile(filePath, await htmlToPdf(html));
+  else await fs.promises.writeFile(filePath, html, "utf-8");
+  return { path: filePath };
+});
+
 app.whenReady().then(() => {
   startBackend();
   createWindow();
