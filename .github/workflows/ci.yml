@@ -135,6 +135,27 @@ jobs:
       - name: Build installer (electron-builder)
         run: npx electron-builder ${{ matrix.args }} --publish never
 
+      - name: Check the engine inside the packaged Mac app
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          app=$(ls -d dist/mac*/"Data Boss.app" | head -1)
+          echo "App: $app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          exe="$app/Contents/Resources/backend/data-boss-backend"
+          codesign --verify --strict --verbose=2 "$exe"
+          printf '%s\n' \
+            '{"id":1,"cmd":"load","args":{"path":"smoke.csv"}}' \
+            '{"id":2,"cmd":"plot","args":{"kind":"BAR","params":{"x":"city","y":"price"}}}' \
+            | "$exe" > app-smoke.txt
+          python - <<'PY'
+          import json
+          msgs = [json.loads(line) for line in open("app-smoke.txt")]
+          status = {m["id"]: m["ok"] for m in msgs}
+          assert status == {0: True, 1: True, 2: True}, msgs
+          print("Engine inside Data Boss.app OK:", sorted(status))
+          PY
+
       - uses: actions/upload-artifact@v7
         with:
           name: installer-${{ matrix.os }}
