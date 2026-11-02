@@ -1440,3 +1440,18 @@ details.raw[open] summary { margin-bottom: 12px; }
   .viz-config { position: static; max-height: none; }
   .viz-config .chart-types { grid-template-columns: repeat(4, 1fr); }
 }
+
+/* ---- cancellable background work ---- */
+.viz-loading { gap: 12px; align-content: center; }
+.viz-loading .cancel-btn { pointer-events: auto; }
+.inline-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 18px;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+.inline-loading .cancel-btn { margin-left: auto; }

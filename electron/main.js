@@ -79,13 +79,36 @@ function startBackend() {
   });
 }
 
-function callBackend(cmd, args = {}) {
+// Latest request id per tag (e.g. "plot"), so the UI can cancel by tag.
+const tagged = new Map();
+
+function callBackend(cmd, args = {}, tag = null) {
   if (!backend) return Promise.reject(new Error("Python backend is not running."));
   const id = nextId++;
+  if (tag) tagged.set(tag, id);
+  const done = () => {
+    if (tag && tagged.get(tag) === id) tagged.delete(tag);
+  };
   return new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject });
+    pending.set(id, {
+      resolve: (v) => (done(), resolve(v)),
+      reject: (e) => (done(), reject(e)),
+    });
     backend.stdin.write(JSON.stringify({ id, cmd, args }) + "\n");
   });
+}
+
+/** Cancel the in-flight request with this tag. Resolves true if something was cancelled. */
+async function cancelTagged(tag) {
+  const id = tagged.get(tag);
+  if (id === undefined || !backend) return false;
+  tagged.delete(tag);
+  try {
+    const res = await callBackend("cancel", { id });
+    return !!res.cancelled;
+  } catch {
+    return false;
+  }
 }
 
 function createWindow() {
@@ -107,7 +130,8 @@ function createWindow() {
   win.loadFile(path.join(ROOT, "renderer", "index.html"));
 }
 
-ipcMain.handle("backend", (_e, cmd, args) => callBackend(cmd, args));
+ipcMain.handle("backend", (_e, cmd, args, tag) => callBackend(cmd, args, tag || null));
+ipcMain.handle("cancel", (_e, tag) => cancelTagged(String(tag)));
 
 ipcMain.handle("open-csv", async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog(win, {

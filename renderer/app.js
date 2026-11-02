@@ -112,6 +112,33 @@ async function withBusy(promise) {
 
 const call = (cmd, args) => withBusy(window.api.call(cmd, args));
 
+/**
+ * Cancellable background request: cancels the previous in-flight request with
+ * the same tag first, then starts a new one. Not wrapped in the busy overlay,
+ * so the window stays usable while the backend works.
+ */
+async function callLatest(tag, cmd, args) {
+  await window.api.cancel(tag);
+  return window.api.call(cmd, args, tag);
+}
+
+const isCancelled = (err) => cleanError(err) === "Cancelled";
+
+/** Shows a Cancel button after a short delay; returns a function that hides it. */
+function delayedCancel(container, tag, onCancel, delay = 700) {
+  const btn = el("button", { class: "btn btn-sm cancel-btn", type: "button" }, icon("i-x"), "Cancel");
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    await window.api.cancel(tag);
+    onCancel();
+  });
+  const timer = setTimeout(() => container.append(btn), delay);
+  return () => {
+    clearTimeout(timer);
+    btn.remove();
+  };
+}
+
 function cleanError(err) {
   // ipcRenderer.invoke wraps errors as "Error invoking remote method 'x': Error: msg"
   return String(err && err.message ? err.message : err).replace(
@@ -973,14 +1000,29 @@ async function renderInspect() {
   const out = $("inspect-output");
   syncInspectTabs();
   app.inspectStale = false;
+  const seq = ++inspectSeq;
+  const loading = el("div", { class: "inline-loading" }, el("span", { class: "impact-dot pulse" }), "Calculating…");
+  const showLoading = setTimeout(() => {
+    if (seq === inspectSeq) out.replaceChildren(loading);
+  }, 150);
+  const hideCancel = delayedCancel(loading, "inspect", () => {
+    if (seq !== inspectSeq) return;
+    app.inspectStale = true;
+    out.replaceChildren(note("info", "Cancelled. Pick a tab to run it again."));
+  });
   try {
-    const res = await call("inspect", { kind, params: app.inspectParams[kind] || {} });
-    if (kind !== app.inspectKind) return; // user switched tabs meanwhile
+    const res = await callLatest("inspect", "inspect", { kind, params: app.inspectParams[kind] || {} });
+    if (seq !== inspectSeq) return; // user switched tabs meanwhile
     out.replaceChildren(INSPECT_VIEWS[kind](res));
   } catch (err) {
+    if (seq !== inspectSeq || isCancelled(err)) return;
     out.replaceChildren(note("error", cleanError(err)));
+  } finally {
+    clearTimeout(showLoading);
+    hideCancel();
   }
 }
+let inspectSeq = 0;
 
 /* ------------------------------------------------------------------ */
 /* clean                                                                */
@@ -1215,8 +1257,8 @@ async function runPreview() {
   const seq = ++previewSeq;
   const method = app.cleanMethod;
   try {
-    // Not wrapped in withBusy: previews run in the background while typing.
-    const res = await window.api.call("preview", { method, params: cleanParams(method, cleanValues) });
+    // Background request; a newer preview cancels this one.
+    const res = await callLatest("preview", "preview", { method, params: cleanParams(method, cleanValues) });
     if (seq !== previewSeq) return;
     const noChange =
       res.removedRows === 0 && res.changedCells === 0 && !res.removedColumns.length && !res.addedColumns.length &&
@@ -1224,7 +1266,7 @@ async function runPreview() {
     renderImpact({ state: "ready", res, noChange });
     $("btn-do").disabled = noChange;
   } catch (err) {
-    if (seq !== previewSeq) return;
+    if (seq !== previewSeq || isCancelled(err)) return;
     renderImpact({ state: "error", text: cleanError(err) });
     $("btn-do").disabled = true;
   }
@@ -1699,9 +1741,15 @@ async function generateChart() {
   app.chartStale = false;
   $("viz-loading").hidden = false;
   $("chart-stage").classList.add("busy-stage");
+  const hideCancel = delayedCancel($("viz-loading"), "plot", () => {
+    if (seq !== renderSeq) return;
+    renderSeq++; // invalidate this render
+    $("chart-stage").classList.remove("busy-stage");
+    showChartMessage("info", "Chart cancelled. Change a setting to draw it again.");
+  });
   try {
     const width = Math.max(600, $("chart-stage").clientWidth - 32);
-    const res = await window.api.call("plot", { kind, params, style: chartStyle(), width });
+    const res = await callLatest("plot", "plot", { kind, params, style: chartStyle(), width });
     if (seq !== renderSeq) return; // a newer render is on its way
     app.chartImage = res.image;
     app.chartCode = res.code;
@@ -1712,9 +1760,10 @@ async function generateChart() {
     $("viz-actions").hidden = false;
     rememberChart(kind, { ...chartValues }, res.image);
   } catch (err) {
-    if (seq !== renderSeq) return;
+    if (seq !== renderSeq || isCancelled(err)) return;
     showChartMessage("error", cleanError(err));
   } finally {
+    hideCancel();
     if (seq === renderSeq) {
       $("viz-loading").hidden = true;
       $("chart-stage").classList.remove("busy-stage");

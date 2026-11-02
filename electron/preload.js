@@ -1,7 +1,8 @@
 const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 contextBridge.exposeInMainWorld("api", {
-  call: (cmd, args) => ipcRenderer.invoke("backend", cmd, args),
+  call: (cmd, args, tag) => ipcRenderer.invoke("backend", cmd, args, tag),
+  cancel: (tag) => ipcRenderer.invoke("cancel", tag),
   openCsv: () => ipcRenderer.invoke("open-csv"),
   loadPath: (path) => ipcRenderer.invoke("backend", "load", { path }),
   exportCsv: (suggestedName) => ipcRenderer.invoke("export-csv", suggestedName),

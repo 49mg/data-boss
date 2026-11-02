@@ -15,7 +15,9 @@ import json
 import math
 import os
 import re
+import queue
 import sys
+import threading
 import traceback
 from contextlib import nullcontext
 
@@ -362,30 +364,110 @@ class Session:
         return result
 
 
-def main():
-    session = Session()
+# Commands that can take a while run on a background worker so the app stays
+# responsive and they can be cancelled. Everything else is answered inline.
+HEAVY_COMMANDS = {"plot", "preview", "inspect"}
 
-    def send(obj):
-        _protocol_out.write(json.dumps(obj, default=str, allow_nan=False) + "\n")
-        _protocol_out.flush()
 
-    send({"id": 0, "ok": True, "result": {"ready": True}})
+class Dispatcher:
+    """Routes requests to the session; heavy ones run on a single worker thread.
 
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
+    Guarantees exactly one response per request id: a cancelled request is
+    answered immediately with {"cancelled": true}, and its result (if the work
+    was already running) is dropped when it finishes. The worker is a single
+    thread on purpose: matplotlib's global state is not thread-safe.
+    """
+
+    def __init__(self, session, send, heavy=HEAVY_COMMANDS):
+        self.session = session
+        self.send = send
+        self.heavy = set(heavy)
+        self.jobs = queue.Queue()
+        self.lock = threading.Lock()
+        self.pending = set()    # ids queued or running on the worker
+        self.cancelled = set()  # ids already answered as cancelled
+        self.worker = threading.Thread(target=self._work, name="heavy-worker", daemon=True)
+        self.worker.start()
+
+    @staticmethod
+    def _run(handler, args, req_id):
+        try:
+            return {"id": req_id, "ok": True, "result": handler(**args)}
+        except Exception as e:  # noqa: BLE001 - every failure goes back to the UI
+            traceback.print_exc(file=sys.stderr)
+            return {"id": req_id, "ok": False, "error": str(e)}
+
+    def handle(self, line):
         req_id = None
         try:
             req = json.loads(line)
             req_id = req.get("id")
-            handler = getattr(session, f"cmd_{req.get('cmd')}", None)
+            cmd = req.get("cmd")
+            args = req.get("args") or {}
+            if cmd == "cancel":
+                self.send({"id": req_id, "ok": True, "result": {"cancelled": self.cancel(args.get("id"))}})
+                return
+            handler = getattr(self.session, f"cmd_{cmd}", None)
             if handler is None:
-                raise ValueError(f"Unknown command: {req.get('cmd')}")
-            send({"id": req_id, "ok": True, "result": handler(**(req.get("args") or {}))})
-        except Exception as e:  # noqa: BLE001 - every failure goes back to the UI
+                raise ValueError(f"Unknown command: {cmd}")
+        except Exception as e:  # noqa: BLE001
             traceback.print_exc(file=sys.stderr)
-            send({"id": req_id, "ok": False, "error": str(e)})
+            self.send({"id": req_id, "ok": False, "error": str(e)})
+            return
+        if cmd in self.heavy:
+            with self.lock:
+                self.pending.add(req_id)
+            self.jobs.put((req_id, handler, args))
+        else:
+            self.send(self._run(handler, args, req_id))
+
+    def cancel(self, req_id):
+        """Cancel a queued or running heavy request. Returns False if it already finished."""
+        with self.lock:
+            if req_id not in self.pending or req_id in self.cancelled:
+                return False
+            self.cancelled.add(req_id)
+        self.send({"id": req_id, "ok": False, "error": "Cancelled", "cancelled": True})
+        return True
+
+    def _work(self):
+        while True:
+            req_id, handler, args = self.jobs.get()
+            response = None
+            with self.lock:
+                skip = req_id in self.cancelled
+            if not skip:
+                response = self._run(handler, args, req_id)
+            with self.lock:
+                self.pending.discard(req_id)
+                was_cancelled = req_id in self.cancelled
+                self.cancelled.discard(req_id)
+            if response is not None and not was_cancelled:
+                self.send(response)
+            self.jobs.task_done()
+
+
+def main():
+    send_lock = threading.Lock()
+
+    def send(obj):
+        try:
+            line = json.dumps(obj, default=str, allow_nan=False) + "\n"
+        except (TypeError, ValueError) as e:  # never let a bad result kill a thread
+            traceback.print_exc(file=sys.stderr)
+            line = json.dumps({"id": obj.get("id"), "ok": False, "error": f"Could not encode the result: {e}"}) + "\n"
+        with send_lock:
+            _protocol_out.write(line)
+            _protocol_out.flush()
+
+    dispatcher = Dispatcher(Session(), send)
+    send({"id": 0, "ok": True, "result": {"ready": True}})
+
+    for line in sys.stdin:
+        line = line.strip()
+        if line:
+            dispatcher.handle(line)
+    dispatcher.jobs.join()  # finish queued work before exiting (e.g. piped input)
 
 
 if __name__ == "__main__":
