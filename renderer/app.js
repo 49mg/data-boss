@@ -418,6 +418,8 @@ function setState(snapshot) {
   else app.testStale = true;
   if (tab === "trends") renderTrendFields(true);
   else app.trendStale = true;
+  if (tab === "segment") renderSegmentFields(true);
+  else app.segmentStale = true;
   showSection(app.section);
 }
 
@@ -479,6 +481,7 @@ function showSection(name) {
   if (app.state && name === "analyze") {
     if (app.analyzeTab === "tests") app.testStale !== false && renderTestFields(true);
     else if (app.analyzeTab === "trends") app.trendStale !== false && renderTrendFields(true);
+    else if (app.analyzeTab === "segment") app.segmentStale !== false && renderSegmentFields(true);
     else if (app.pivotStale) renderPivotFields(true);
   }
 }
@@ -513,6 +516,9 @@ function onLoaded(snapshot) {
   app.testStale = true;
   app.trend = null;
   app.trendStale = true;
+  app.segment = null;
+  app.segmentStale = true;
+  $("segment-output").replaceChildren();
   $("trend-output").replaceChildren();
   $("test-output").replaceChildren();
   $("pivot-chart-card").hidden = true;
@@ -2339,11 +2345,163 @@ function showPivotCode() {
 function selectAnalyzeTab(tab) {
   app.analyzeTab = tab;
   for (const b of document.querySelectorAll("#analyze-tabs button")) b.setAttribute("aria-selected", String(b.dataset.tab === tab));
-  for (const t of ["pivot", "trends", "tests"]) $(`analyze-${t}`).hidden = tab !== t;
+  for (const t of ["pivot", "trends", "segment", "tests"]) $(`analyze-${t}`).hidden = tab !== t;
   if (!app.state) return;
   if (tab === "tests") renderTestFields(app.testStale !== false);
+  else if (tab === "segment") renderSegmentFields(app.segmentStale !== false);
   else if (tab === "trends") renderTrendFields(app.trendStale !== false);
   else if (app.pivotStale) renderPivotFields(true);
+}
+
+/* ---- segment comparison ------------------------------------------------ */
+
+let segmentValues = {};
+let segmentTimer = null;
+let segmentSeq = 0;
+const MAX_CONDITIONS = 3;
+
+function renderSegmentFields(run = false) {
+  const memory = (app.forms.segment ||= { count: 1 });
+  const cols = allCols();
+  const box = $("segment-fields");
+  box.replaceChildren();
+  const values = {};
+  for (let i = 0; i < memory.count; i++) {
+    const p = `c${i}_`;
+    const column = cols.includes(memory[p + "column"]) ? memory[p + "column"] : groupCols()[0] || cols[0];
+    const ops = numericCols().includes(column) ? FILTER_OPS_NUMERIC : FILTER_OPS_TEXT;
+    const op = ops.some(([v]) => v === memory[p + "operator"]) ? memory[p + "operator"] : "==";
+    const specs = [
+      { key: p + "column", label: i ? "And" : "Column", type: "select", options: cols, default: column, rerender: true },
+      { key: p + "operator", label: "Condition", type: "select", options: toOptions(ops), default: op, rerender: true },
+    ];
+    if (op !== "is_missing" && op !== "not_missing") specs.push({ key: p + "value", label: "Value", type: "text" });
+    const group = el("div", { class: "segment-cond" });
+    const v = buildForm(group, specs, memory, (vals, key) => {
+      Object.assign(segmentValues, vals);
+      if (key === p + "column" || key === p + "operator") return renderSegmentFields(true);
+      scheduleSegment(450);
+    });
+    Object.assign(values, v);
+    if (i > 0) {
+      group.append(el("button", { class: "btn btn-sm btn-ghost", type: "button", onclick: () => {
+        for (let j = i; j < memory.count - 1; j++) {
+          for (const k of ["column", "operator", "value"]) memory[`c${j}_${k}`] = memory[`c${j + 1}_${k}`];
+        }
+        memory.count -= 1;
+        renderSegmentFields(true);
+      } }, "Remove condition"));
+    }
+    box.append(group);
+  }
+  if (memory.count < MAX_CONDITIONS) {
+    box.append(el("button", { class: "btn btn-sm", type: "button", onclick: () => { memory.count += 1; renderSegmentFields(false); } },
+      "+ Add condition"));
+  }
+  segmentValues = values;
+  if (run) scheduleSegment(0);
+}
+
+function segmentConditions(v) {
+  const out = [];
+  for (let i = 0; i < MAX_CONDITIONS; i++) {
+    const column = v[`c${i}_column`];
+    if (!column) continue;
+    out.push({ column, operator: v[`c${i}_operator`] || "==", value: v[`c${i}_value`] || "" });
+  }
+  return out;
+}
+
+function scheduleSegment(delay = 250) {
+  clearTimeout(segmentTimer);
+  app.segmentStale = false;
+  const conds = segmentConditions(segmentValues);
+  const missing = conds.find((c) => !["is_missing", "not_missing"].includes(c.operator) && !c.value.trim());
+  if (!conds.length || missing) {
+    $("segment-actions").hidden = true;
+    $("segment-sub").textContent = "";
+    $("segment-output").replaceChildren(note("info", "Describe the segment: pick a column, a condition and a value, e.g. churned equals yes."));
+    return;
+  }
+  segmentTimer = setTimeout(runSegment, delay);
+}
+
+async function runSegment() {
+  if (!app.state) return;
+  const seq = ++segmentSeq;
+  const out = $("segment-output");
+  const loading = el("div", { class: "inline-loading" }, el("span", { class: "impact-dot pulse" }), "Comparing every column…");
+  const showLoading = setTimeout(() => seq === segmentSeq && out.replaceChildren(loading), 150);
+  const hideCancel = delayedCancel(loading, "segment", () => seq === segmentSeq && out.replaceChildren(note("info", "Cancelled.")));
+  try {
+    const res = await callLatest("segment", "segment", { conditions: segmentConditions(segmentValues) });
+    if (seq !== segmentSeq) return;
+    app.segment = res;
+    $("segment-sub").textContent = `${res.label} · ${fmt(res.segmentRows)} vs ${fmt(res.restRows)} rows`;
+    $("segment-actions").hidden = false;
+    out.replaceChildren(segmentView(res));
+  } catch (err) {
+    if (seq !== segmentSeq || isCancelled(err)) return;
+    app.segment = null;
+    $("segment-actions").hidden = true;
+    out.replaceChildren(note("warn", cleanError(err)));
+  } finally {
+    clearTimeout(showLoading);
+    hideCancel();
+  }
+}
+
+function pairBars(items) {
+  const max = Math.max(...items.flatMap((i) => [i.seg ?? 0, i.rest ?? 0]), 1e-12);
+  return el("div", { class: "seg-bars" },
+    items.map((i) =>
+      el("div", { class: "seg-bar-row" },
+        el("span", { class: "seg-bar-label", text: i.label, title: i.label }),
+        el("div", { class: "seg-bar-pair" },
+          el("div", { class: "seg-bar seg" }, el("span", { style: `width:${Math.max(0.5, ((i.seg ?? 0) / max) * 100)}%` })),
+          el("div", { class: "seg-bar rest" }, el("span", { style: `width:${Math.max(0.5, ((i.rest ?? 0) / max) * 100)}%` }))),
+        el("span", { class: "seg-bar-value mono", text: `${i.fmt(i.seg)} · ${i.fmt(i.rest)}` }))));
+}
+
+function segmentView(res) {
+  const found = res.columns.some((c) => c.significant);
+  const head = el("div", { class: `test-verdict ${found ? "found" : "none"}` },
+    el("div", { class: "test-verdict-label", text: found ? "The segment stands out" : "No clear differences" }),
+    el("p", { class: "test-sentence", text: `${res.summary} Segment: ${res.label} (${fmt(res.segmentRows)} rows) vs the other ${fmt(res.restRows)} rows.` }));
+  const legend = el("div", { class: "trend-legend muted" },
+    el("span", { class: "trend-key seg-key" }), "segment", el("span", { class: "trend-key rest-key" }), "rest");
+  const rows = res.columns.map((c) => {
+    const pct = (v) => fmtPct((v ?? 0) * 100);
+    const bars = c.kind === "numeric"
+      ? pairBars([{ label: "mean", seg: c.segment.mean, rest: c.rest.mean, fmt: fnum },
+        { label: "median", seg: c.segment.median, rest: c.rest.median, fmt: fnum }])
+      : pairBars(c.shares.map((s) => ({ label: s.value, seg: s.segment, rest: s.rest, fmt: pct })));
+    return el("div", { class: `seg-row ${c.significant ? "" : "dim"}` },
+      el("div", { class: "tgt-main" },
+        el("div", { class: "tgt-head" },
+          el("span", { class: "tgt-name", text: c.column, title: c.column }),
+          el("span", { class: "chip", text: c.kind === "numeric" ? "number" : "category" }),
+          el("span", { class: `tgt-strength ${c.significant ? "good-text" : ""}`, text: c.significant ? "differs" : "not clear" })),
+        el("p", { class: "tgt-sentence", text: c.sentence }),
+        el("div", { class: "tgt-meta muted" },
+          `${c.test} · adjusted p ${pText(c.pAdjusted)} · ${c.effectName} ${c.effect.toFixed(2)} · n = ${fmt(c.segment.n)} / ${fmt(c.rest.n)}`)),
+      bars);
+  });
+  const list = el("div", { class: "card seg-card" },
+    el("div", { class: "seg-head" }, el("h2", { text: "Column by column" }), legend),
+    el("p", { class: "card-hint", text: "Clear differences first, strongest at the top. " + res.caveats.join(" ") }),
+    rows.length ? el("div", { class: "tgt-list" }, rows) : note("info", "No other column could be compared."));
+  const skipped = res.skipped.length
+    ? el("details", { class: "card tgt-skipped" },
+      el("summary", { text: `Skipped columns (${res.skipped.length})` }),
+      el("ul", {}, res.skipped.map((k) => el("li", {}, el("strong", { text: k.column }), ` — ${k.reason}`))))
+    : null;
+  return el("div", { class: "test-body" }, head, list, skipped);
+}
+
+function showSegmentCode() {
+  if (!app.segment) return;
+  openCodeDialog("Segment as pandas code", "Rebuilds your data, splits off the segment and shows how to test a column.", app.segment.code, "segment.py");
 }
 
 /* ---- trends ------------------------------------------------------------ */
@@ -3218,6 +3376,7 @@ $("btn-pivot-save").addEventListener("click", savePivot);
 $("btn-pivot-code").addEventListener("click", showPivotCode);
 $("btn-test-code").addEventListener("click", showTestCode);
 $("btn-trend-code").addEventListener("click", showTrendCode);
+$("btn-segment-code").addEventListener("click", showSegmentCode);
 for (const b of document.querySelectorAll("#analyze-tabs button")) b.addEventListener("click", () => selectAnalyzeTab(b.dataset.tab));
 $("btn-pivot-chart").addEventListener("click", togglePivotChart);
 $("btn-run-query").addEventListener("click", runQuery);

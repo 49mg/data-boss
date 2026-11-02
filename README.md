@@ -58,6 +58,7 @@ A **column detail picker** below the table lets you select any column and view i
 
 - **Pivot table** — group by rows and columns with count, sum, mean, median and more; totals are true overall values
 - **Trends** — a value per day, week, month, quarter or year with change against the previous period or the same period last year, a moving average and a running total; insight sentences name the biggest rise and drop, and incomplete first/last periods are flagged instead of faking a jump
+- **Compare segment** — describe a group of rows (e.g. churned = yes, or plan = pro and fee > 40) and every other column is compared with the rest of the data: averages or category shares side by side, the fitting test per column, p-values adjusted for testing many columns (Holm), clear differences ranked first
 - **Tests** — pick a measure and what to compare it by; the fitting test is chosen from the column types, group count, shape and spread (t-test / Welch, Mann-Whitney, ANOVA / Kruskal-Wallis with pairwise comparisons, chi-square / Fisher, Pearson / Spearman). Each result shows why that test was used, the p-value, effect size, confidence interval, a one-sentence interpretation and caveats, plus the scipy code that reproduces it
 
 ### Data cleaning
@@ -143,6 +144,7 @@ data-boss/
 │   ├── base.py             # Abstract base classes (BaseDataInspector, BaseDataCleaner, BaseDataVisualizer)
 │   ├── inspectors.py       # DataInspector — read-only data summaries
 │   ├── target.py           # Target analysis: rank columns by relationship to one column
+│   ├── segments.py         # Segment vs rest comparison on every column
 │   ├── trends.py           # Period-over-period trends with insight sentences
 │   ├── stats.py            # Statistical tests chosen automatically, explained in plain language
 │   ├── cleaners.py         # DataCleaner — dataframe mutations and CSV export

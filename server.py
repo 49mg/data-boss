@@ -32,6 +32,7 @@ from src.analysis import pivot
 from src.files import FileFormatError, excel_sheets, read_table, write_table
 from src.inspectors import _label
 from src.query import example_queries, quote_ident, run_query, run_query_full, sql_code
+from src.segments import compare_segment
 from src.stats import compare
 from src.trends import trends
 
@@ -472,6 +473,14 @@ class Session:
         res["code"] = "\n".join(["import numpy as np", "import pandas as pd", "", *self._data_code(), "", res["code"], ""])
         return {**res, "table": table(res["table"])}
 
+    # ---- segment comparison --------------------------------------------------
+
+    def cmd_segment(self, conditions):
+        res = compare_segment(self.require_df(), conditions)
+        res["code"] = "\n".join(["import numpy as np", "import pandas as pd", "from scipy import stats", "",
+                                 *self._data_code(), "", res["code"], ""])
+        return jsonable(res)
+
     # ---- statistical tests -------------------------------------------------
 
     def cmd_stats_test(self, outcome, by, groups=None):
@@ -527,7 +536,7 @@ class Session:
 
 # Commands that can take a while run on a background worker so the app stays
 # responsive and they can be cancelled. Everything else is answered inline.
-HEAVY_COMMANDS = {"plot", "preview", "inspect", "query", "query_chart", "pivot", "pivot_chart", "stats_test", "trends"}
+HEAVY_COMMANDS = {"plot", "preview", "inspect", "query", "query_chart", "pivot", "pivot_chart", "stats_test", "trends", "segment"}
 
 
 class Dispatcher:

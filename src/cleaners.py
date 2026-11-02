@@ -23,6 +23,48 @@ FILTER_OPERATORS = {
 }
 
 
+def filter_mask(df, column, operator, value=""):
+    """Boolean mask of rows matching a condition, plus the pandas expression for it."""
+    if column not in df.columns:
+        raise ValueError(f"Unknown column: {column}.")
+    if operator not in FILTER_OPERATORS:
+        raise ValueError(f"Unknown operator: {operator}.")
+    s = df[column]
+    col = repr(column)
+    numeric = pd.api.types.is_numeric_dtype(s) and not pd.api.types.is_bool_dtype(s)
+
+    if operator == "is_missing":
+        mask, expr = s.isna(), f"df[{col}].isna()"
+    elif operator == "not_missing":
+        mask, expr = s.notna(), f"df[{col}].notna()"
+    elif operator in ("contains", "not_contains"):
+        if value == "":
+            raise ValueError("Enter the text to search for.")
+        hit = s.astype("string").str.contains(value, case=False, regex=False, na=False).astype(bool)
+        mask = hit if operator == "contains" else ~hit
+        expr = f"df[{col}].astype('string').str.contains({value!r}, case=False, regex=False, na=False)"
+        if operator == "not_contains":
+            expr = f"~{expr}"
+    else:
+        if value == "":
+            raise ValueError("Enter a value to compare with.")
+        target = value
+        if numeric:
+            try:
+                target = float(value)
+            except ValueError as e:
+                raise ValueError(f"“{value}” is not a number, but {column} is numeric.") from e
+        elif operator in (">", ">=", "<", "<="):
+            raise ValueError("Greater/less than comparisons need a numeric column.")
+        mask = {
+            "==": s == target, "!=": s != target, ">": s > target,
+            ">=": s >= target, "<": s < target, "<=": s <= target,
+        }[operator].fillna(False).astype(bool)
+        expr = f"df[{col}] {operator} {target!r}"
+
+    return mask, expr
+
+
 def _changed(before, after):
     """Count cells that differ, treating NaN == NaN as unchanged."""
     same = before.eq(after) | (before.isna() & after.isna())
@@ -142,39 +184,7 @@ class DataCleaner(BaseDataCleaner):
             raise ValueError(f"Unknown operator: {operator}.")
         if mode not in ("keep", "remove"):
             raise ValueError("Mode must be 'keep' or 'remove'.")
-        s = self.df[column]
-        col = repr(column)
-        numeric = pd.api.types.is_numeric_dtype(s) and not pd.api.types.is_bool_dtype(s)
-
-        if operator == "is_missing":
-            mask, expr = s.isna(), f"df[{col}].isna()"
-        elif operator == "not_missing":
-            mask, expr = s.notna(), f"df[{col}].notna()"
-        elif operator in ("contains", "not_contains"):
-            if value == "":
-                raise ValueError("Enter the text to search for.")
-            hit = s.astype("string").str.contains(value, case=False, regex=False, na=False).astype(bool)
-            mask = hit if operator == "contains" else ~hit
-            expr = f"df[{col}].astype('string').str.contains({value!r}, case=False, regex=False, na=False)"
-            if operator == "not_contains":
-                expr = f"~{expr}"
-        else:
-            if value == "":
-                raise ValueError("Enter a value to compare with.")
-            target = value
-            if numeric:
-                try:
-                    target = float(value)
-                except ValueError as e:
-                    raise ValueError(f"“{value}” is not a number, but {column} is numeric.") from e
-            elif operator in (">", ">=", "<", "<="):
-                raise ValueError("Greater/less than comparisons need a numeric column.")
-            mask = {
-                "==": s == target, "!=": s != target, ">": s > target,
-                ">=": s >= target, "<": s < target, "<=": s <= target,
-            }[operator].fillna(False).astype(bool)
-            expr = f"df[{col}] {operator} {target!r}"
-
+        mask, expr = filter_mask(self.df, column, operator, value)
         before = len(self.df)
         self.df = self.df[mask] if mode == "keep" else self.df[~mask]
         removed = before - len(self.df)

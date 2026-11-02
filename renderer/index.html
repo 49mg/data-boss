@@ -338,6 +338,7 @@
             <div class="segmented" id="analyze-tabs" role="tablist" aria-label="Analysis">
               <button role="tab" aria-selected="true" data-tab="pivot">Pivot table</button>
               <button role="tab" aria-selected="false" data-tab="trends">Trends</button>
+              <button role="tab" aria-selected="false" data-tab="segment">Compare segment</button>
               <button role="tab" aria-selected="false" data-tab="tests">Tests</button>
             </div>
             <div class="viz-layout" id="analyze-pivot">
@@ -391,6 +392,27 @@
                     </div>
                   </div>
                   <div id="trend-output" class="test-output"></div>
+                </div>
+              </div>
+            </div>
+            <div class="viz-layout" id="analyze-segment" hidden>
+              <aside class="card viz-config">
+                <div class="viz-label">Segment: rows where…</div>
+                <div id="segment-fields" class="fields fields-stack"></div>
+                <p class="test-help">Every other column is compared between the segment and the rest of the rows.</p>
+              </aside>
+              <div class="viz-main">
+                <div class="card card-flush">
+                  <div class="viz-toolbar">
+                    <div class="viz-heading">
+                      <div class="viz-kind">Segment vs rest</div>
+                      <div class="viz-sub" id="segment-sub"></div>
+                    </div>
+                    <div class="viz-actions" id="segment-actions" hidden>
+                      <button id="btn-segment-code" class="btn btn-sm"><svg class="icon"><use href="#i-code"/></svg>Code</button>
+                    </div>
+                  </div>
+                  <div id="segment-output" class="test-output"></div>
                 </div>
               </div>
             </div>
