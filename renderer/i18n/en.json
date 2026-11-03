@@ -1180,5 +1180,13 @@
  "“{0}” holds dates stored as text": "“{0}” holds dates stored as text",
  "Converting it to dates enables trends, forecasts, date parts and correct sorting.": "Converting it to dates enables trends, forecasts, date parts and correct sorting.",
  "The lower end of the range is cut off at 0, because the values can't be negative.": "The lower end of the range is cut off at 0, because the values can't be negative.",
- "Most of the model's skill comes from “{0}”. That is fine if it is known at the moment you would make a prediction; if it is only known afterwards (like the length of a sales call before the call), it is data leakage and the score is too optimistic.": "Most of the model's skill comes from “{0}”. That is fine if it is known at the moment you would make a prediction; if it is only known afterwards (like the length of a sales call before the call), it is data leakage and the score is too optimistic."
+ "Most of the model's skill comes from “{0}”. That is fine if it is known at the moment you would make a prediction; if it is only known afterwards (like the length of a sales call before the call), it is data leakage and the score is too optimistic.": "Most of the model's skill comes from “{0}”. That is fine if it is known at the moment you would make a prediction; if it is only known afterwards (like the length of a sales call before the call), it is data leakage and the score is too optimistic.",
+ "This {0} has {1} from {2}.": "This {0} has {1} from {2}.",
+ "Remove items from {0}": "Remove items from {0}",
+ "Keep them": "Keep them",
+ "report": "report",
+ "dashboard": "dashboard",
+ "{0} items": "{0} items",
+ "1 item": "1 item",
+ "Start over": "Start over"
 }

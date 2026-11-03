@@ -1180,5 +1180,13 @@
  "“{0}” holds dates stored as text": "«{0}» يحتوي تواريخ مخزّنة كنص",
  "Converting it to dates enables trends, forecasts, date parts and correct sorting.": "تحويله إلى تواريخ يتيح الاتجاهات والتوقعات وأجزاء التاريخ والترتيب الصحيح.",
  "The lower end of the range is cut off at 0, because the values can't be negative.": "الحد الأدنى للنطاق مقطوع عند 0، لأن القيم لا يمكن أن تكون سالبة.",
- "Most of the model's skill comes from “{0}”. That is fine if it is known at the moment you would make a prediction; if it is only known afterwards (like the length of a sales call before the call), it is data leakage and the score is too optimistic.": "معظم قدرة النموذج تأتي من «{0}». هذا جيد إن كانت قيمته معروفة لحظة التنبؤ؛ أما إن كانت تُعرف بعدها فقط (مثل مدة مكالمة البيع قبل إجرائها) فهذا تسرّب بيانات والدرجة متفائلة أكثر من اللازم."
+ "Most of the model's skill comes from “{0}”. That is fine if it is known at the moment you would make a prediction; if it is only known afterwards (like the length of a sales call before the call), it is data leakage and the score is too optimistic.": "معظم قدرة النموذج تأتي من «{0}». هذا جيد إن كانت قيمته معروفة لحظة التنبؤ؛ أما إن كانت تُعرف بعدها فقط (مثل مدة مكالمة البيع قبل إجرائها) فهذا تسرّب بيانات والدرجة متفائلة أكثر من اللازم.",
+ "This {0} has {1} from {2}.": "يحتوي {0} على {1} من {2}.",
+ "Remove items from {0}": "احذف عناصر {0}",
+ "Keep them": "أبقِها",
+ "report": "التقرير",
+ "dashboard": "لوحة المتابعة",
+ "{0} items": "{0} عناصر",
+ "1 item": "عنصر واحد",
+ "Start over": "ابدأ من جديد"
 }

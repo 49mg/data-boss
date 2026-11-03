@@ -3747,6 +3747,24 @@ function moveBlock(i, delta) {
   renderReport();
 }
 
+/** Items made from a different file than the one open now (headings and notes belong to the report itself). */
+function itemsFromOtherFiles(list) {
+  const current = app.state && app.state.fileName;
+  return list.filter((b) => b.source && current && b.source !== current && b.type !== "text" && b.type !== "heading");
+}
+
+/** A notice offering to start over when a report or dashboard still holds another file's results. */
+function otherFileNotice({ foreign, what, onNew, onRemove, onKeep }) {
+  const files = [...new Set(foreign.map((b) => b.source))];
+  return el("div", { class: "note info other-file-note" },
+    el("div", {},
+      el("strong", { text: trf("This {0} has {1} from {2}.", tr(what), tr(plural(foreign.length, "item")), files.join(", ")), raw: true }),
+      el("div", { class: "other-file-actions" },
+        el("button", { class: "btn btn-sm btn-primary", onclick: onNew }, "Start over"),
+        el("button", { class: "btn btn-sm", onclick: onRemove }, trf("Remove items from {0}", files.join(", "))),
+        el("button", { class: "btn btn-sm btn-ghost", onclick: onKeep }, "Keep them"))));
+}
+
 function renderReport() {
   syncReportBadge();
   $("report-title").value = app.report.title || "";
@@ -3790,7 +3808,16 @@ function renderReport() {
         } }, icon("i-x"))),
       body);
   });
-  editor.replaceChildren(...items);
+  const foreign = app.report.keptWith === (app.state && app.state.fileName) ? [] : itemsFromOtherFiles(blocks);
+  const notice = foreign.length
+    ? otherFileNotice({
+      foreign, what: "report",
+      onNew: () => { app.report = { title: "Data report", blocks: [] }; saveReport(); renderReport(); },
+      onRemove: () => { app.report.blocks = blocks.filter((b) => !foreign.includes(b)); saveReport(); renderReport(); },
+      onKeep: () => { app.report.keptWith = app.state.fileName; saveReport(); renderReport(); },
+    })
+    : null;
+  editor.replaceChildren(...[notice, ...items].filter(Boolean));
 }
 
 async function exportReport(format, testPath) {
@@ -4613,7 +4640,7 @@ function syncDashBadge() {
 }
 
 function pinTile(tile) {
-  app.dashboard.tiles.push({ id: `t${Date.now()}${Math.floor(Math.random() * 1000)}`, ...tile });
+  app.dashboard.tiles.push({ id: `t${Date.now()}${Math.floor(Math.random() * 1000)}`, source: app.state ? app.state.fileName : null, ...tile });
   saveDashboard();
   syncDashBadge();
   app.dashStale = true;
@@ -4663,8 +4690,17 @@ async function renderDashboard() {
       el("p", { class: "card-hint", text: "Use Pin on a chart in Visualize or on a pivot table in Analyze. Pinned items stay here and redraw from the current data after every cleaning step, undo or new query." })));
     return;
   }
+  const foreign = app.dashboard.keptWith === app.state.fileName ? [] : itemsFromOtherFiles(tiles);
+  const notice = foreign.length
+    ? otherFileNotice({
+      foreign, what: "dashboard",
+      onNew: () => { app.dashboard = { tiles: [] }; saveDashboard(); renderDashboard(); },
+      onRemove: () => { app.dashboard.tiles = tiles.filter((t) => !foreign.includes(t)); saveDashboard(); renderDashboard(); },
+      onKeep: () => { app.dashboard.keptWith = app.state.fileName; saveDashboard(); renderDashboard(); },
+    })
+    : null;
   const bodies = tiles.map(() => el("div", { class: "dash-body" }, el("div", { class: "inline-loading" }, el("span", { class: "impact-dot pulse" }), "Drawing…")));
-  grid.replaceChildren(...tiles.map((t, i) =>
+  grid.replaceChildren(...(notice ? [notice] : []), ...tiles.map((t, i) =>
     el("div", { class: `card dash-tile ${t.type === "pivot" ? "dash-pivot" : ""}`, "data-type": t.type },
       el("div", { class: "dash-head" },
         el("strong", { class: "dash-title", text: t.title, title: t.title }),
