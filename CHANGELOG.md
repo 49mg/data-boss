@@ -3,7 +3,7 @@
 All notable changes to Data Boss. Versions follow [semantic versioning](https://semver.org).
 Milestones before 1.0 were developed on the `desktop-application` branch and not published as releases.
 
-## [1.0.0] – not released yet
+## [1.0.0] – 2026-11-11
 
 ### Added
 - **Arabic interface** with a right-to-left layout, a bundled Arabic font (Noto Sans Arabic) and translated analysis sentences; switch with **العربية / English** in the sidebar. Reports exported in Arabic are right to left.
