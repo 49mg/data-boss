@@ -300,13 +300,6 @@ To test the builds without publishing, open **Actions → Build installers → R
 
 Each release also carries `latest.yml` (Windows) and `latest-linux.yml` (AppImage). Installed copies read these to find and download updates, so keep them attached to the release.
 
-### Code signing (optional, removes the security warnings)
-
-- **macOS**: an Apple Developer account ($99/year) for a Developer ID certificate and notarization.
-- **Windows**: a code-signing certificate, or Azure Trusted Signing.
-
-electron-builder picks these up from the `CSC_LINK` / `CSC_KEY_PASSWORD` (and `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` for notarization) environment variables. Add them as repository secrets and pass them to the build step, and remove `"identity": "-"` from the `mac` config.
-
 ## Architecture
 
 Each layer has a single responsibility:
